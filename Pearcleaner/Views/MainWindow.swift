@@ -44,63 +44,65 @@ struct MainWindow: View {
         // Main App Window
         ZStack {
 
-            HStack(alignment: .center, spacing: 0) {
+            TahoeGlassContainer {
+                HStack(alignment: .center, spacing: 0) {
 
-                Group {
-                    switch appState.currentPage {
-                    case .applications:
-                        withConsole {
-                            applicationsView
-                        }
+                    Group {
+                        switch appState.currentPage {
+                        case .applications:
+                            withConsole {
+                                applicationsView
+                            }
 
-                    case .orphans:
-                        withConsole {
-                            ZombieView()
-                        }
+                        case .orphans:
+                            withConsole {
+                                ZombieView()
+                            }
 
-                    case .development:
-                        withConsole {
-                            EnvironmentCleanerView()
-                        }
+                        case .development:
+                            withConsole {
+                                EnvironmentCleanerView()
+                            }
 
-                    case .lipo:
-                        withConsole {
-                            LipoView()
-                        }
+                        case .lipo:
+                            withConsole {
+                                LipoView()
+                            }
 
-                    case .services:
-                        withConsole {
-                            DaemonView()
-                        }
+                        case .services:
+                            withConsole {
+                                DaemonView()
+                            }
 
-                    case .packages:
-                        withConsole {
-                            PackageView()
-                        }
+                        case .packages:
+                            withConsole {
+                                PackageView()
+                            }
 
-                    case .plugins:
-                        withConsole {
-                            PluginsView()
-                        }
+                        case .plugins:
+                            withConsole {
+                                PluginsView()
+                            }
 
-                    case .fileSearch:
-                        withConsole {
-                            FileSearchView()
-                        }
+                        case .fileSearch:
+                            withConsole {
+                                FileSearchView()
+                            }
 
-                    case .homebrew:
-                        HomebrewView()
-                            .environmentObject(brewManager)
-
-                    case .updater:
-                        withConsole {
-                            AppsUpdaterView()
+                        case .homebrew:
+                            HomebrewView()
                                 .environmentObject(brewManager)
-                                .environmentObject(updateManager)
+
+                        case .updater:
+                            withConsole {
+                                AppsUpdaterView()
+                                    .environmentObject(brewManager)
+                                    .environmentObject(updateManager)
+                            }
                         }
                     }
-                }
 
+                }
             }
 
             // Drop overlay

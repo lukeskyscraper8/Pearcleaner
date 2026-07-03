@@ -703,6 +703,24 @@ extension View {
     }
 }
 
+/// Wraps content in a GlassEffectContainer on macOS 26+ so sibling
+/// glassEffect shapes sample together and can morph/blend correctly.
+/// On earlier systems the content renders unchanged.
+struct TahoeGlassContainer<Content: View>: View {
+    var spacing: CGFloat = 20.0
+    @ViewBuilder let content: () -> Content
+
+    var body: some View {
+        if #available(macOS 26.0, *) {
+            GlassEffectContainer(spacing: spacing) {
+                content()
+            }
+        } else {
+            content()
+        }
+    }
+}
+
 
 struct SettingsToggle: ToggleStyle {
     @Environment(\.colorScheme) var colorScheme
