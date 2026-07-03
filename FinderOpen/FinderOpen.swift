@@ -55,8 +55,16 @@ class FinderOpen: FIFinderSync {
 
         // Consider only the first selected item
         let firstSelectedItem = selectedItems[0]
-        let path = firstSelectedItem.path
-        NSWorkspace.shared.open(URL(string: "pear://com.alienator88.Pearcleaner?path=\(path)")!)
+        var components = URLComponents()
+        components.scheme = "pear"
+        components.host = "com.lukerow.Pearcleaner"
+        components.queryItems = [URLQueryItem(name: "path", value: firstSelectedItem.path)]
+
+        if let url = components.url {
+            NSWorkspace.shared.open(url)
+        } else {
+            NSLog("FinderOpen: Failed to construct Pearcleaner URL for %@", firstSelectedItem.path as NSString)
+        }
 
     }
 

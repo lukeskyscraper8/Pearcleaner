@@ -686,7 +686,7 @@ struct FileSearchView: View {
         let newURL = result.url.deletingLastPathComponent().appendingPathComponent(newName)
 
         // Always use helper for file operations (works for all file types)
-        let command = "/bin/mv \"\(result.url.path)\" \"\(newURL.path)\""
+        let command = "/bin/mv \(result.url.path.shellQuoted) \(newURL.path.shellQuoted)"
 
         Task {
             let moveResult = try! await runSUCommand(

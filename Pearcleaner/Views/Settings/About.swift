@@ -58,7 +58,7 @@ struct AboutSettingsTab: View {
                         }
                         Spacer()
                         Button {
-                            NSWorkspace.shared.open(URL(string: "https://github.com/alienator88/Pearcleaner/issues/new/choose")!)
+                            NSWorkspace.shared.open(URL(string: "https://github.com/lukerow/Pearcleaner/issues/new/choose")!)
                         } label: {
                             Text("View")
                         }
@@ -94,7 +94,7 @@ struct AboutSettingsTab: View {
 
                         Spacer()
                         Button {
-                            NSWorkspace.shared.open(URL(string: "https://github.com/alienator88/Pearcleaner/discussions/137")!)
+                            NSWorkspace.shared.open(URL(string: "https://github.com/lukerow/Pearcleaner/discussions/137")!)
                         } label: {
                             Text("View")
                         }

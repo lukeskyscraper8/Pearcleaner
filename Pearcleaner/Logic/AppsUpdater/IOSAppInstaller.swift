@@ -389,14 +389,14 @@ class IOSAppInstaller {
 
         // Script 1: Atomic replacement (all commands chained with &&)
         let installScript = """
-        pkill -x '\(wrappedBundleName.replacingOccurrences(of: ".app", with: ""))' 2>/dev/null || true && \
-        mv '\(oldWrapper.path)' '\(backupWrapper.path)' && \
-        mv '\(newWrapper.path)' '\(oldWrapper.path)' && \
-        chown -R root:wheel '\(normalizedPath.path)' && \
-        chmod -R 755 '\(normalizedPath.path)' && \
-        rm -f '\(symlinkPath.path)' && \
-        ln -s 'Wrapper/\(wrappedBundleName)' '\(symlinkPath.path)' && \
-        rm -rf '\(backupWrapper.path)'
+        pkill -x \(wrappedBundleName.replacingOccurrences(of: ".app", with: "").shellQuoted) 2>/dev/null || true && \
+        mv \(oldWrapper.path.shellQuoted) \(backupWrapper.path.shellQuoted) && \
+        mv \(newWrapper.path.shellQuoted) \(oldWrapper.path.shellQuoted) && \
+        chown -R root:wheel \(normalizedPath.path.shellQuoted) && \
+        chmod -R 755 \(normalizedPath.path.shellQuoted) && \
+        rm -f \(symlinkPath.path.shellQuoted) && \
+        ln -s \("Wrapper/\(wrappedBundleName)".shellQuoted) \(symlinkPath.path.shellQuoted) && \
+        rm -rf \(backupWrapper.path.shellQuoted)
         """
 
         let result = try await runSUCommand(
@@ -410,7 +410,7 @@ class IOSAppInstaller {
             printOS("Atomic replacement failed, attempting to restore backup...")
 
             if FileManager.default.fileExists(atPath: backupWrapper.path) {
-                let restoreScript = "mv '\(backupWrapper.path)' '\(oldWrapper.path)'"
+                let restoreScript = "mv \(backupWrapper.path.shellQuoted) \(oldWrapper.path.shellQuoted)"
                 let _ = try await runSUCommand(
                     restoreScript,
                     errorContext: "Failed to restore backup after failed installation"

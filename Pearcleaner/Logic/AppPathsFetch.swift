@@ -28,7 +28,7 @@ class AppPathFinder {
     private var appInfo: AppInfo
     private var locations: Locations
     private var containerCollection: [URL] = []
-    private let collectionAccessQueue = DispatchQueue(label: "com.alienator88.Pearcleaner.appPathFinder.collectionAccess")
+    private let collectionAccessQueue = DispatchQueue(label: "com.lukerow.Pearcleaner.appPathFinder.collectionAccess")
     @AppStorage("settings.general.searchSensitivity") private var sensitivityLevel: SearchSensitivityLevel = .strict
     @AppStorage("settings.general.searchTextContent") private var searchTextContent: Bool = false
 

@@ -25,7 +25,7 @@
 			<key>CFBundleTypeRole</key>
 			<string>Editor</string>
 			<key>CFBundleURLName</key>
-			<string>com.alienator88.Pearcleaner</string>
+			<string>com.lukerow.Pearcleaner</string>
 			<key>CFBundleURLSchemes</key>
 			<array>
 				<string>pear</string>

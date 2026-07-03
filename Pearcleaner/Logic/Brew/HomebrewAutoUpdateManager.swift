@@ -103,8 +103,8 @@ class HomebrewAutoUpdateManager: ObservableObject {
     var originalRunUpgrade: Bool = false
     var originalRunCleanup: Bool = false
 
-    private let plistPath = "\(NSHomeDirectory())/Library/LaunchAgents/com.alienator88.Pearcleaner.homebrew-autoupdate.plist"
-    private let label = "com.alienator88.Pearcleaner.homebrew-autoupdate"
+    private let plistPath = "\(NSHomeDirectory())/Library/LaunchAgents/com.lukerow.Pearcleaner.homebrew-autoupdate.plist"
+    private let label = "com.lukerow.Pearcleaner.homebrew-autoupdate"
     let logPath = "/tmp/homebrew-autoupdate.log"
 
     private init() {
@@ -324,7 +324,7 @@ class HomebrewAutoUpdateManager: ObservableObject {
 
         // Register with launchctl
         let uid = getuid()
-        let bootstrapCommand = "launchctl bootstrap gui/\(uid) \(plistPath)"
+        let bootstrapCommand = "launchctl bootstrap \("gui/\(uid)".shellQuoted) \(plistPath.shellQuoted)"
 
         let result = shell(bootstrapCommand)
         if result.exitCode != 0 {
@@ -339,7 +339,7 @@ class HomebrewAutoUpdateManager: ObservableObject {
     /// - Parameter updateStatus: Whether to update isAgentLoaded state (default: true)
     func unregisterAgent(updateStatus: Bool = true) throws {
         let uid = getuid()
-        let bootoutCommand = "launchctl bootout gui/\(uid)/\(label)"
+        let bootoutCommand = "launchctl bootout \("gui/\(uid)/\(label)".shellQuoted)"
 
         let result = shell(bootoutCommand)
         // Note: bootout returns error if service not loaded, which is fine
@@ -356,7 +356,7 @@ class HomebrewAutoUpdateManager: ObservableObject {
     /// Check if LaunchAgent is currently loaded
     func checkAgentStatus() {
         let uid = getuid()
-        let printCommand = "launchctl print gui/\(uid)/\(label)"
+        let printCommand = "launchctl print \("gui/\(uid)/\(label)".shellQuoted)"
 
         let result = shell(printCommand)
         // If launchctl print succeeds, the service is loaded

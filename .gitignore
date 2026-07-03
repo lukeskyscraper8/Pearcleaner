@@ -90,5 +90,6 @@ fastlane/test_output
 iOSInjectionProject/
 .DS_Store
 Builds/Export
+dist/
 .claude
 Pearcleaner/Resources/Localizable.xcstrings.bak

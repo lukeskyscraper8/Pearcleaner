@@ -51,11 +51,20 @@ func checkApp(file: String) {
     let appExt = app.pathExtension
     if appExt == "app" {
         if let appBundle = Bundle(url: app) {
-            if appBundle.bundleIdentifier == "com.alienator88.Pearcleaner" {
+            if appBundle.bundleIdentifier == "com.lukerow.Pearcleaner" {
                 return
             } else {
                 if FileManager.default.isInTrash(app) {
-                    NSWorkspace.shared.open(URL(string: "pear://openApp?path=\(file)")!)
+                    var components = URLComponents()
+                    components.scheme = "pear"
+                    components.host = "openApp"
+                    components.queryItems = [URLQueryItem(name: "path", value: file)]
+
+                    if let url = components.url {
+                        NSWorkspace.shared.open(url)
+                    } else {
+                        NSLog("PearcleanerSentinel: Failed to construct Pearcleaner URL for %@", file as NSString)
+                    }
                 }
             }
         } else {

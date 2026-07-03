@@ -12,6 +12,12 @@ import AppKit
 import AudioToolbox
 import OpenDirectory
 
+extension String {
+    var shellQuoted: String {
+        "'\(replacingOccurrences(of: "'", with: "'\\''"))'"
+    }
+}
+
 func ifOSBelow(macOS major: Int, _ minor: Int = 0, _ patch: Int = 0) -> Bool {
     if !ProcessInfo.processInfo.isOperatingSystemAtLeast(
         OperatingSystemVersion(majorVersion: major, minorVersion: minor, patchVersion: patch)
@@ -89,7 +95,7 @@ func manageSymlink(install: Bool, symlinkName: String = "pear") {
         if !binPathExists {
             command += "mkdir -p /usr/local/bin && "
         }
-        command += "ln -s '\(appPath)' '\(symlinkPath)'"
+        command += "ln -s \(appPath.shellQuoted) \(symlinkPath.shellQuoted)"
     } else {
         // Remove the symlink using FileManagerUndo for safe trash deletion
         let _ = FileManagerUndo.shared.deleteFiles(at: [URL(fileURLWithPath: symlinkPath)], bundleName: "CLI-Symlink")

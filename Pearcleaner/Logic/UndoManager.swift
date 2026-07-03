@@ -106,7 +106,7 @@ class FileManagerUndo {
         let bundleFolderURL = URL(fileURLWithPath: bundleFolderPath)
 
         // Create the bundle folder first
-        let createFolderCommand = "/bin/mkdir -p \"\(bundleFolderPath)\""
+        let createFolderCommand = "/bin/mkdir -p \(bundleFolderPath.shellQuoted)"
 
         let mvCommands = validURLs.map { file -> String in
             let baseName = file.lastPathComponent
@@ -126,8 +126,8 @@ class FileManagerUndo {
             let destinationURL = bundleFolderURL.appendingPathComponent(finalName)
             tempFilePairs.append((trashURL: destinationURL, originalURL: file))
 
-            let source = "\"\(file.path)\""
-            let destination = "\"\(destinationURL.path)\""
+            let source = file.path.shellQuoted
+            let destination = destinationURL.path.shellQuoted
             return "/bin/mv \(source) \(destination)"
         }.joined(separator: " ; ")
 
@@ -182,8 +182,8 @@ class FileManagerUndo {
         }
 
         let commands = filePairs.map {
-            let source = "\"\($0.trashURL.path)\""
-            let destination = "\"\($0.originalURL.path)\""
+            let source = $0.trashURL.path.shellQuoted
+            let destination = $0.originalURL.path.shellQuoted
             return "/bin/mv \(source) \(destination)"
         }.joined(separator: " ; ")
 
@@ -199,7 +199,7 @@ class FileManagerUndo {
 
         // Add bundle folder cleanup command if we have one to remove
         let finalCommands = if let bundleFolder = bundleFolderToRemove {
-            "\(commands) ; /bin/rmdir \"\(bundleFolder)\""
+            "\(commands) ; /bin/rmdir \(bundleFolder.shellQuoted)"
         } else {
             commands
         }

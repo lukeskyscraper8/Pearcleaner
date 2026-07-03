@@ -8,7 +8,7 @@
 import Foundation
 
 extension UserDefaults {
-    static let appGroup = UserDefaults(suiteName: "group.com.alienator88.Pearcleaner")!
+    static let appGroup = UserDefaults(suiteName: "group.com.lukerow.pearcleaner.68583n3mnf")!
 
     struct Keys {
         static let showAppIconInMenu = "showAppIconInMenu"

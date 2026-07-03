@@ -388,7 +388,7 @@ struct PearCLI: ParsableCommand {
             // Check if Pearcleaner main app is running
             let runningApps = NSWorkspace.shared.runningApplications
             let pearcleanerRunning = runningApps.contains { app in
-                app.bundleIdentifier == "com.alienator88.Pearcleaner" &&
+                app.bundleIdentifier == "com.lukerow.Pearcleaner" &&
                 app.processIdentifier != ProcessInfo.processInfo.processIdentifier
             }
 
@@ -409,7 +409,7 @@ struct PearCLI: ParsableCommand {
 
             let observerQueue = OperationQueue()
             let observer = center.addObserver(
-                forName: NSNotification.Name("com.alienator88.Pearcleaner.passwordResponse"),
+                forName: NSNotification.Name("com.lukerow.Pearcleaner.passwordResponse"),
                 object: nil,
                 queue: observerQueue
             ) { notification in
@@ -422,7 +422,7 @@ struct PearCLI: ParsableCommand {
             }
 
             center.postNotificationName(
-                NSNotification.Name("com.alienator88.Pearcleaner.passwordRequest"),
+                NSNotification.Name("com.lukerow.Pearcleaner.passwordRequest"),
                 object: nil,
                 userInfo: [
                     "requestId": requestId,

@@ -19,7 +19,7 @@ struct PearcleanerApp: App {
     //MARK: StateObjects
     @StateObject var locations = Locations()
     @StateObject var fsm = FolderSettingsManager.shared
-    @StateObject private var updater = Updater(owner: "alienator88", repo: "Pearcleaner")
+    @StateObject private var updater = Updater(owner: "lukerow", repo: "Pearcleaner")
 
     init() {
         //MARK: GUI or CLI launch mode.
@@ -114,7 +114,12 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
         // Open deep link for each app - DeeplinkManager will queue and process them sequentially
         for appURL in appURLs {
-            if let deepLinkURL = URL(string: "pear://com.alienator88.Pearcleaner?path=\(appURL.path.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? appURL.path)") {
+            var components = URLComponents()
+            components.scheme = "pear"
+            components.host = "com.lukerow.Pearcleaner"
+            components.queryItems = [URLQueryItem(name: "path", value: appURL.path)]
+
+            if let deepLinkURL = components.url {
                 NSWorkspace.shared.open(deepLinkURL)
             }
         }

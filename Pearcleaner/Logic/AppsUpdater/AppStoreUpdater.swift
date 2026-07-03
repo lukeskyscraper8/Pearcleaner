@@ -583,7 +583,7 @@ private final class MacOSDownloadObserverWithWorkaround: NSObject, CKDownloadQue
         progressCallback(0.85, "Installing...")
 
         // 85-90%: Running installer (Script 1)
-        let installerScript = "installer -pkg '\(pkgPath)' -target /"
+        let installerScript = "installer -pkg \(pkgPath.shellQuoted) -target /"
         let result = try! await runSUCommand(
             installerScript,
             errorContext: "Failed to install package",
@@ -600,10 +600,10 @@ private final class MacOSDownloadObserverWithWorkaround: NSObject, CKDownloadQue
 
             // Create receipt directory, copy receipt, set permissions, and set ownership to root:wheel (chained commands)
             let receiptScript = """
-            mkdir -p '\(receiptDir)' && \
-            cp '\(receiptPath)' '\(receiptDestPath)' && \
-            chmod 644 '\(receiptDestPath)' && \
-            chown 0:0 '\(receiptDestPath)'
+            mkdir -p \(receiptDir.shellQuoted) && \
+            cp \(receiptPath.shellQuoted) \(receiptDestPath.shellQuoted) && \
+            chmod 644 \(receiptDestPath.shellQuoted) && \
+            chown 0:0 \(receiptDestPath.shellQuoted)
             """
 
             let receiptResult = try! await runSUCommand(

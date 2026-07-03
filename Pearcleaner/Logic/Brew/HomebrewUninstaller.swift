@@ -196,7 +196,7 @@ class HomebrewUninstaller {
 
             // Kill any remaining processes (belt and suspenders approach)
             for processName in processNamesToKill {
-                try await runPrivilegedCommand("pkill -9 -f '\(processName)' 2>/dev/null || killall -9 '\(processName)' 2>/dev/null || true")
+                try await runPrivilegedCommand("pkill -9 -f \(processName.shellQuoted) 2>/dev/null || killall -9 \(processName.shellQuoted) 2>/dev/null || true")
             }
 
             // Collect app paths
@@ -413,21 +413,22 @@ class HomebrewUninstaller {
         // Try both system and user domains
         let systemPlistPath = "/Library/LaunchDaemons/\(value).plist"
         let userPlistPath = NSHomeDirectory() + "/Library/LaunchAgents/\(value).plist"
+        let uid = getuid()
 
         // Unload the service and kill the process
         do {
             // Try bootout first (modern launchctl)
-            try await runPrivilegedCommand("launchctl bootout system/\(value) 2>/dev/null || launchctl unload \"\(systemPlistPath)\" 2>/dev/null || true")
+            try await runPrivilegedCommand("launchctl bootout \("system/\(value)".shellQuoted) 2>/dev/null || launchctl unload \(systemPlistPath.shellQuoted) 2>/dev/null || true")
             // Force kill the process if still running
-            try await runPrivilegedCommand("pkill -9 -f '\(value)' 2>/dev/null || true")
+            try await runPrivilegedCommand("pkill -9 -f \(value.shellQuoted) 2>/dev/null || true")
         } catch {
             printOS("Failed to unload system service: \(error.localizedDescription)")
         }
 
         do {
-            try await runPrivilegedCommand("launchctl bootout gui/$UID/\(value) 2>/dev/null || launchctl unload \"\(userPlistPath)\" 2>/dev/null || true")
+            try await runPrivilegedCommand("launchctl bootout \("gui/\(uid)/\(value)".shellQuoted) 2>/dev/null || launchctl unload \(userPlistPath.shellQuoted) 2>/dev/null || true")
             // Force kill the process if still running
-            try await runPrivilegedCommand("pkill -9 -f '\(value)' 2>/dev/null || true")
+            try await runPrivilegedCommand("pkill -9 -f \(value.shellQuoted) 2>/dev/null || true")
         } catch {
             printOS("Failed to unload user service: \(error.localizedDescription)")
         }
@@ -447,7 +448,7 @@ class HomebrewUninstaller {
 
     private func handleQuit(_ value: String) async throws {
         // First try using the bundle ID with killall (works with bundle IDs)
-        var command = "killall -15 '\(value)' 2>/dev/null || true"
+        var command = "killall -15 \(value.shellQuoted) 2>/dev/null || true"
         do {
             _ = try await runPrivilegedCommand(command)
         } catch {
@@ -455,7 +456,7 @@ class HomebrewUninstaller {
         }
 
         // Also try pkill with partial match in case it's a process name
-        command = "pkill -15 -f '\(value)' 2>/dev/null || true"
+        command = "pkill -15 -f \(value.shellQuoted) 2>/dev/null || true"
         do {
             _ = try await runPrivilegedCommand(command)
         } catch {
@@ -468,7 +469,11 @@ class HomebrewUninstaller {
               let signal = value[0] as? String,
               let process = value[1] as? String else { return }
 
-        try await runPrivilegedCommand("pkill -\(signal) \(process)")
+        guard signal.range(of: #"^[A-Za-z0-9]+$"#, options: .regularExpression) != nil else {
+            throw NSError(domain: "HomebrewUninstaller", code: 1, userInfo: [NSLocalizedDescriptionKey: "Invalid signal name"])
+        }
+
+        try await runPrivilegedCommand("pkill -\(signal) \(process.shellQuoted)")
     }
 
     private func handleLoginItem(_ value: String) async throws {
@@ -483,21 +488,21 @@ class HomebrewUninstaller {
     }
 
     private func handleKext(_ value: String) async throws {
-        try await runPrivilegedCommand("kextunload -b \(value)")
+        try await runPrivilegedCommand("kextunload -b \(value.shellQuoted)")
     }
 
     private func handleScript(_ value: [String: Any]) async throws {
         guard let executable = value["executable"] as? String else { return }
 
         let args = (value["args"] as? [String]) ?? []
-        let command = ([executable] + args).joined(separator: " ")
+        let command = ([executable] + args).map(\.shellQuoted).joined(separator: " ")
 
         try await runPrivilegedCommand(command)
     }
 
     private func handlePkgutil(_ value: String) async throws {
         // Get list of files from pkgutil
-        let filesResult = try await runPrivilegedCommand("pkgutil --files \(value) 2>/dev/null || echo ''")
+        let filesResult = try await runPrivilegedCommand("pkgutil --files \(value.shellQuoted) 2>/dev/null || echo ''")
         let files = filesResult.components(separatedBy: "\n").filter { !$0.isEmpty }
 
         // Collect files for batch deletion (they're relative to /)
@@ -515,7 +520,7 @@ class HomebrewUninstaller {
         }
 
         // Forget the package
-        try await runPrivilegedCommand("pkgutil --forget \(value)")
+        try await runPrivilegedCommand("pkgutil --forget \(value.shellQuoted)")
     }
 
     private func handleDelete(_ path: String) async throws {

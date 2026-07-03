@@ -190,7 +190,7 @@ class AppState: ObservableObject {
         }
     }
 
-    func loadVolumeInfo() {
+    func loadVolumeInfo(completion: (() -> Void)? = nil) {
         DispatchQueue.global(qos: .userInitiated).async {
             var volumes: [VolumeInfo] = []
 
@@ -257,6 +257,7 @@ class AppState: ObservableObject {
                     }
                 }
                 self.volumeInfos = volumes
+                completion?()
             }
         }
     }

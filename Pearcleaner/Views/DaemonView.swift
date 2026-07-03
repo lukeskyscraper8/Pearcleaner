@@ -971,20 +971,20 @@ struct LaunchItemRowView: View {
             switch action {
             case "load":
                 if !item.path.isEmpty && item.path != "Not found" {
-                    command = needsSudo ? "sudo launchctl load '\(item.path)'" : "launchctl load '\(item.path)'"
+                    command = needsSudo ? "sudo launchctl load \(item.path.shellQuoted)" : "launchctl load \(item.path.shellQuoted)"
                 } else {
-                    command = needsSudo ? "sudo launchctl enable \(domain)/\(item.label)" : "launchctl enable \(domain)/\(item.label)"
+                    command = needsSudo ? "sudo launchctl enable \("\(domain)/\(item.label)".shellQuoted)" : "launchctl enable \("\(domain)/\(item.label)".shellQuoted)"
                 }
             case "unload":
                 if !item.path.isEmpty && item.path != "Not found" {
-                    command = needsSudo ? "sudo launchctl unload '\(item.path)'" : "launchctl unload '\(item.path)'"
+                    command = needsSudo ? "sudo launchctl unload \(item.path.shellQuoted)" : "launchctl unload \(item.path.shellQuoted)"
                 } else {
-                    command = needsSudo ? "sudo launchctl disable \(domain)/\(item.label)" : "launchctl disable \(domain)/\(item.label)"
+                    command = needsSudo ? "sudo launchctl disable \("\(domain)/\(item.label)".shellQuoted)" : "launchctl disable \("\(domain)/\(item.label)".shellQuoted)"
                 }
             case "kickstart":
-                command = needsSudo ? "sudo launchctl kickstart -k \(domain)/\(item.label)" : "launchctl kickstart -k \(domain)/\(item.label)"
+                command = needsSudo ? "sudo launchctl kickstart -k \("\(domain)/\(item.label)".shellQuoted)" : "launchctl kickstart -k \("\(domain)/\(item.label)".shellQuoted)"
             case "remove":
-                command = needsSudo ? "sudo launchctl remove \(item.label)" : "launchctl remove \(item.label)"
+                command = needsSudo ? "sudo launchctl remove \(item.label.shellQuoted)" : "launchctl remove \(item.label.shellQuoted)"
             default:
                 await MainActor.run {
                     isPerformingAction = false
@@ -1078,4 +1078,3 @@ private func runDirectShellCommand(command: String) -> (Bool, String) {
     
     return (task.terminationStatus == 0, output)
 }
-
