@@ -1098,3 +1098,35 @@ extension GroupBoxStyle where Self == CollapsibleGroupBoxStyle {
         )
     }
 }
+
+extension View {
+    /// .glass on macOS 26+, .bordered earlier.
+    @ViewBuilder
+    func adaptiveGlassButton() -> some View {
+        if #available(macOS 26.0, *) {
+            self.buttonStyle(.glass)
+        } else {
+            self.buttonStyle(.bordered)
+        }
+    }
+
+    /// .glassProminent on macOS 26+, .borderedProminent earlier.
+    @ViewBuilder
+    func adaptiveGlassProminentButton() -> some View {
+        if #available(macOS 26.0, *) {
+            self.buttonStyle(.glassProminent)
+        } else {
+            self.buttonStyle(.borderedProminent)
+        }
+    }
+
+    /// .glassProminent on macOS 26+ while preserving a custom legacy style earlier.
+    @ViewBuilder
+    func adaptiveGlassProminentButton<LegacyStyle: ButtonStyle>(fallback legacyStyle: LegacyStyle) -> some View {
+        if #available(macOS 26.0, *) {
+            self.buttonStyle(.glassProminent)
+        } else {
+            self.buttonStyle(legacyStyle)
+        }
+    }
+}
