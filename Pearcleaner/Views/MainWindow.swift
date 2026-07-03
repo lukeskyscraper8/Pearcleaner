@@ -195,7 +195,7 @@ struct MainWindow: View {
             }
         }
         .toolbar {
-            TahoeToolbarItem(placement: .navigation, isGroup: true) {
+            TahoeToolbarItem(placement: .navigation, isGroup: true, hidesSharedBackground: false) {
 
                 // Page Selector
                 Menu {

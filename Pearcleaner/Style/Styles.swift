@@ -589,13 +589,14 @@ struct TahoeToolbarItem<Content: View>: ToolbarContent {
     var id: String? = nil
     var placement: ToolbarItemPlacement = .automatic
     var isGroup: Bool = false
+    var hidesSharedBackground: Bool = true
     @ViewBuilder let content: () -> Content
 
     var body: some ToolbarContent {
         if isGroup {
             if #available(macOS 26.0, *) {
                 ToolbarItemGroup(placement: placement) { content() }
-                    .sharedBackgroundVisibility(.hidden)
+                    .sharedBackgroundVisibility(hidesSharedBackground ? .hidden : .visible)
             } else {
                 ToolbarItemGroup(placement: placement) { content() }
             }
@@ -603,10 +604,10 @@ struct TahoeToolbarItem<Content: View>: ToolbarContent {
             if #available(macOS 26.0, *) {
                 if let id {
                     ToolbarItem(id: id, placement: placement) { content() }
-                        .sharedBackgroundVisibility(.hidden)
+                        .sharedBackgroundVisibility(hidesSharedBackground ? .hidden : .visible)
                 } else {
                     ToolbarItem(placement: placement) { content() }
-                        .sharedBackgroundVisibility(.hidden)
+                        .sharedBackgroundVisibility(hidesSharedBackground ? .hidden : .visible)
                 }
             } else {
                 if let id {
