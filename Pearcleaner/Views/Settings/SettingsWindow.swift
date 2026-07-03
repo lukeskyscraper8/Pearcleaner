@@ -222,6 +222,7 @@ struct SettingsView: View {
             }
         }
         .scrollIndicators(scrollIndicators ? .automatic : .never)
+        .tahoeSoftScrollEdge()
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .padding()
 

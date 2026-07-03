@@ -1129,4 +1129,14 @@ extension View {
             self.buttonStyle(legacyStyle)
         }
     }
+
+    /// Soft scroll-edge blur on macOS 26+; no-op earlier.
+    @ViewBuilder
+    func tahoeSoftScrollEdge() -> some View {
+        if #available(macOS 26.0, *) {
+            self.scrollEdgeEffectStyle(.soft, for: .all)
+        } else {
+            self
+        }
+    }
 }
