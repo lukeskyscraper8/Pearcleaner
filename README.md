@@ -68,6 +68,10 @@ This project was born out of wanting to learn more on how macOS deals with app i
 - Include/exclude directories for searching
 - Adjustable search sensitivity
 
+### Liquid Glass
+- macOS 26 Tahoe and newer use native Liquid Glass for navigation chrome, toolbar controls, and prominent actions.
+- Settings -> Interface keeps the Regular/Clear glass variant setting; macOS 13-15 keep the existing theme and material styling.
+
 ## Screenshots
 
 <img src="https://github.com/user-attachments/assets/5095d30c-3665-4b24-bf00-756baac59026" align="left" width="400" />
