@@ -22,11 +22,13 @@ struct SettingsView: View {
 
     var body: some View {
 
-        HStack(spacing: 0) {
-            sidebarView
-                .padding(8)
-            detailView
-                .padding(.top)
+        TahoeGlassContainer {
+            HStack(spacing: 0) {
+                sidebarView
+                    .padding(8)
+                detailView
+                    .padding(.top)
+            }
         }
         .ignoresSafeArea(edges: .top)
         .background(backgroundView(color: ThemeColors.shared(for: colorScheme).primaryBG))
