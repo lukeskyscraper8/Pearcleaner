@@ -10,7 +10,7 @@ fail() {
     exit 1
 }
 
-if rg -n 'password(Request|Response)|DistributedNotificationCenter.*password' Pearcleaner >/dev/null; then
+if grep -REn 'password(Request|Response)|DistributedNotificationCenter.*password' Pearcleaner >/dev/null; then
     fail "password data is still routed through distributed notifications"
 fi
 
@@ -18,15 +18,15 @@ if [[ -e Pearcleaner/Logic/KeychainPasswordManager.swift || -e Pearcleaner/Logic
     fail "legacy reusable-password components still exist"
 fi
 
-rg -q 'identifier "com\.lukerow\.Pearcleaner".*subject\.OU.*68583N3MNF' \
+grep -Eq 'identifier "com\.lukerow\.Pearcleaner".*subject\.OU.*68583N3MNF' \
     PearcleanerHelper/CodesignCheck.swift \
     || fail "the helper is not pinned to Pearcleaner's identifier and team"
 
-if rg -n 'resetSettings' Pearcleaner/Logic/DeepLink.swift >/dev/null; then
+if grep -n 'resetSettings' Pearcleaner/Logic/DeepLink.swift >/dev/null; then
     fail "the destructive resetSettings deep link is still public"
 fi
 
-rg -q '"version" : "2\.9\.4"' \
+grep -q '"version" : "2\.9\.4"' \
     Pearcleaner.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved \
     || fail "Sparkle is not resolved to the patched version"
 
