@@ -344,7 +344,7 @@ struct AppCommands: Commands {
             // GitHub Menu
             Button
             {
-                NSWorkspace.shared.open(URL(string: "https://github.com/lukerow/Pearcleaner")!)
+                NSWorkspace.shared.open(URL(string: "https://github.com/lukeskyscraper8/Pearcleaner")!)
             } label: {
                 Label("View Repository", systemImage: "paperplane")
             }
@@ -352,7 +352,7 @@ struct AppCommands: Commands {
 
             Button
             {
-                NSWorkspace.shared.open(URL(string: "https://github.com/lukerow/Pearcleaner/releases")!)
+                NSWorkspace.shared.open(URL(string: "https://github.com/lukeskyscraper8/Pearcleaner/releases")!)
             } label: {
                 Label("View Releases", systemImage: "paperplane")
             }
@@ -360,7 +360,7 @@ struct AppCommands: Commands {
 
             Button
             {
-                NSWorkspace.shared.open(URL(string: "https://github.com/lukerow/Pearcleaner/issues")!)
+                NSWorkspace.shared.open(URL(string: "https://github.com/lukeskyscraper8/Pearcleaner/issues")!)
             } label: {
                 Label("View Issues", systemImage: "paperplane")
             }
@@ -371,7 +371,7 @@ struct AppCommands: Commands {
 
             Button
             {
-                NSWorkspace.shared.open(URL(string: "https://github.com/lukerow/Pearcleaner/issues/new/choose")!)
+                NSWorkspace.shared.open(URL(string: "https://github.com/lukeskyscraper8/Pearcleaner/issues/new/choose")!)
             } label: {
                 Label("Submit New Issue", systemImage: "paperplane")
             }

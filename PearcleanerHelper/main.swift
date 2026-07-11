@@ -31,6 +31,7 @@ class HelperToolDelegate: NSObject, NSXPCListenerDelegate, HelperToolProtocol {
             print("❌ Rejected connection from unauthorized client")
             return false
         }
+        newConnection.setCodeSigningRequirement(CodesignCheck.clientRequirement)
         newConnection.exportedInterface = NSXPCInterface(with: HelperToolProtocol.self)
         newConnection.exportedObject = self
         newConnection.invalidationHandler = { [weak self] in
@@ -85,7 +86,7 @@ class HelperToolDelegate: NSObject, NSXPCListenerDelegate, HelperToolProtocol {
     // Check that the codesigning matches between the main app and the helper app
     private func isValidClient(connection: NSXPCConnection) -> Bool {
         do {
-            return try CodesignCheck.codeSigningMatches(pid: connection.processIdentifier)
+            return try CodesignCheck.clientIsPearcleaner(pid: connection.processIdentifier)
         } catch {
             print("Helper code signing check failed with error: \(error)")
             return false

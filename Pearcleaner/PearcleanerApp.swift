@@ -19,14 +19,15 @@ struct PearcleanerApp: App {
     //MARK: StateObjects
     @StateObject var locations = Locations()
     @StateObject var fsm = FolderSettingsManager.shared
-    @StateObject private var updater = Updater(owner: "lukerow", repo: "Pearcleaner")
+    @StateObject private var updater = Updater(owner: "lukeskyscraper8", repo: "Pearcleaner")
 
     init() {
         //MARK: GUI or CLI launch mode.
         handleLaunchMode()
 
-        //MARK: Initialize password request handler for SUDO_ASKPASS IPC
-        _ = PasswordRequestHandler.shared
+        // Remove credentials cached by older versions. Password caching is no
+        // longer supported by the SUDO_ASKPASS flow.
+        removeLegacySudoPasswordCache()
 
         //MARK: Pre-load apps data during app initialization (use streaming for fast initial load)
         let folderPaths = FolderSettingsManager.shared.folderPaths

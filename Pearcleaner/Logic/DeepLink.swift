@@ -39,7 +39,6 @@ class DeeplinkManager {
         static let appsPaths = "appsPaths"
         static let orphanedPaths = "orphanedPaths"
         static let refreshAppsList = "refreshAppsList"
-        static let resetSettings = "resetSettings"
 
         static let allActions = [
             openPearcleaner,
@@ -52,8 +51,7 @@ class DeeplinkManager {
             checkUpdates,
             appsPaths,
             orphanedPaths,
-            refreshAppsList,
-            resetSettings
+            refreshAppsList
         ]
     }
 
@@ -291,11 +289,6 @@ class DeeplinkManager {
             break
         case DeepLinkActions.refreshAppsList:
             reloadAppsList(appState: appState, fsm: fsm)
-            break
-        case DeepLinkActions.resetSettings:
-            DispatchQueue.global(qos: .background).async {
-                UserDefaults.standard.dictionaryRepresentation().keys.forEach(UserDefaults.standard.removeObject(forKey:))
-            }
             break
         default:
             break

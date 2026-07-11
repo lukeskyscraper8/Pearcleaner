@@ -1,5 +1,6 @@
 import AlinFoundation
 import ArgumentParser
+import Darwin
 import Foundation
 import ServiceManagement
 import SwiftUI
@@ -364,81 +365,31 @@ struct PearCLI: ParsableCommand {
         var message: String = "Homebrew is requesting your password to perform a privileged action"
 
         func run() throws {
-            // Check keychain first
-            if let cached = KeychainPasswordManager.shared.retrievePassword() {
-                print(cached)
-                Darwin.exit(0)
-            }
-
-            // Not cached, get fresh password
-            guard let password = obtainPassword() else {
+            guard Self.isInvokedBySudo() else {
+                FileHandle.standardError.write(
+                    Data("Pearcleaner ask-password may only be invoked by /usr/bin/sudo.\n".utf8)
+                )
                 Darwin.exit(1)
             }
 
-            // Save to keychain (uses user-configured timeout from settings)
-            KeychainPasswordManager.shared.savePassword(password)
+            _ = NSApplication.shared
+            guard let password = Self.showPasswordDialog(message: message) else {
+                Darwin.exit(1)
+            }
 
-            // Print and exit immediately
+            // SUDO_ASKPASS requires the password on stdout. It is never cached or
+            // sent over cross-process notifications.
             print(password)
             Darwin.exit(0)
         }
 
-        // MARK: - Obtain Password
-        private func obtainPassword() -> String? {
-            // Check if Pearcleaner main app is running
-            let runningApps = NSWorkspace.shared.runningApplications
-            let pearcleanerRunning = runningApps.contains { app in
-                app.bundleIdentifier == "com.lukerow.Pearcleaner" &&
-                app.processIdentifier != ProcessInfo.processInfo.processIdentifier
-            }
-
-            if pearcleanerRunning {
-                return requestPasswordFromMainApp()
-            } else {
-                _ = NSApplication.shared
-                return Self.showPasswordDialog(message: message)
-            }
-        }
-
-        // MARK: - Request Password from Main App
-        private func requestPasswordFromMainApp() -> String? {
-            let center = DistributedNotificationCenter.default()
-            let requestId = UUID().uuidString
-            var receivedPassword: String?
-            let semaphore = DispatchSemaphore(value: 0)
-
-            let observerQueue = OperationQueue()
-            let observer = center.addObserver(
-                forName: NSNotification.Name("com.lukerow.Pearcleaner.passwordResponse"),
-                object: nil,
-                queue: observerQueue
-            ) { notification in
-                if let userInfo = notification.userInfo,
-                   let responseId = userInfo["requestId"] as? String,
-                   responseId == requestId {
-                    receivedPassword = userInfo["password"] as? String
-                    semaphore.signal()
-                }
-            }
-
-            center.postNotificationName(
-                NSNotification.Name("com.lukerow.Pearcleaner.passwordRequest"),
-                object: nil,
-                userInfo: [
-                    "requestId": requestId,
-                    "message": message
-                ],
-                deliverImmediately: true
-            )
-
-            let timeout = DispatchTime.now() + .seconds(60)
-            if semaphore.wait(timeout: timeout) == .success {
-                center.removeObserver(observer)
-                return receivedPassword?.isEmpty == false ? receivedPassword : nil
-            } else {
-                center.removeObserver(observer)
-                return nil
-            }
+        private static func isInvokedBySudo() -> Bool {
+            // PROC_PIDPATHINFO_MAXSIZE is unavailable to Swift because it is a
+            // compound C macro. Its Darwin value is 4 * MAXPATHLEN (4096).
+            var pathBuffer = [CChar](repeating: 0, count: 4_096)
+            let length = proc_pidpath(getppid(), &pathBuffer, UInt32(pathBuffer.count))
+            guard length > 0 else { return false }
+            return String(cString: pathBuffer) == "/usr/bin/sudo"
         }
 
         // MARK: - Show Password Dialog

@@ -56,7 +56,7 @@ struct UpdateSettingsTab: View {
 
 
                 Button {
-                    NSWorkspace.shared.open(URL(string: "https://github.com/lukerow/Pearcleaner/releases")!)
+                    NSWorkspace.shared.open(URL(string: "https://github.com/lukeskyscraper8/Pearcleaner/releases")!)
                 } label: {
                     Label("Releases", systemImage: "link")
                 }

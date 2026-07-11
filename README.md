@@ -1,10 +1,12 @@
 # Pearcleaner
 
-### Website
-The only legitimate website owned by me is https://itsalin.com. Anything else offering Pearcleaner downloads is either a scam or not affiliated with me.
+### Maintained fork
+This repository is an independently maintained fork of [alienator88/Pearcleaner](https://github.com/alienator88/Pearcleaner). The original project's legitimate website is https://itsalin.com. Anything else claiming to be the official upstream website or offering unaffiliated downloads may be unsafe.
 More details [HERE](https://www.reddit.com/r/macapps/comments/1ucstzy/psa_pearcleanercom_is_a_fake_site_pushing_macos/).
 
-### Project Status: On Hold
+### Project Status: Independently Maintained Fork
+The notice below describes the upstream project's status when this fork was created:
+
 > As you may have noticed, development on the app has basically stopped since end of 2025, so I wanted to provide some context.
 >
 > Between a new job, joining a friend who is building a SaaS company, and other life priorities, I no longer have the time needed to actively maintain or continue development on the project.
@@ -25,13 +27,13 @@ More details [HERE](https://www.reddit.com/r/macapps/comments/1ucstzy/psa_pearcl
    <img src="https://github.com/user-attachments/assets/62cd5fcb-92d3-4d3a-9664-161a7deabd46" align="center" width="160" height="160" />
 
    <br />
-   <strong>Status: </strong>On Hold
+   <strong>Status: </strong>Independently Maintained Fork
    <br />
-   <strong>Version: </strong>5.4.3
+   <strong>Version: </strong>5.4.4
    <br />
-   <a href="https://github.com/alienator88/Pearcleaner/releases"><strong>Download</strong></a>
+   <a href="https://github.com/lukeskyscraper8/Pearcleaner/releases"><strong>Download</strong></a>
     · 
-   <a href="https://github.com/alienator88/Pearcleaner/commits">Commits</a>
+   <a href="https://github.com/lukeskyscraper8/Pearcleaner/commits">Commits</a>
   </p>
 </p>
 </br>
@@ -83,7 +85,7 @@ This project was born out of wanting to learn more on how macOS deals with app i
 
 ## Issues
 > [!WARNING]
-> - When submitting issues, please use the appropriate issue template corresponding with your problem [HERE](https://github.com/alienator88/Pearcleaner/issues/new/choose)
+> - When submitting issues, please use the appropriate issue template corresponding with your problem [HERE](https://github.com/lukeskyscraper8/Pearcleaner/issues/new/choose)
 > - Issues with no template will be closed
 > - This is a personal/hobby app, therefore the project is fairly opinionated. Opinion-based requests (e.g., “the layout would look better this way”) will not be considered.
 
@@ -106,7 +108,7 @@ This project was born out of wanting to learn more on how macOS deals with app i
 <details>
   <summary>Releases</summary>
 
-Pre-compiled, always up-to-date versions are available from my [releases](https://github.com/alienator88/Pearcleaner/releases) page.
+When available, pre-compiled versions maintained by this fork are published on its [releases](https://github.com/lukeskyscraper8/Pearcleaner/releases) page.
 </details>
 
 <details>
@@ -123,19 +125,13 @@ If you are able to contribute to translations for the app, please see this discu
 
 ## License
 > [!IMPORTANT]
-> Pearcleaner is licensed under Apache 2.0 with [Commons Clause](https://commonsclause.com/). This means that you can do anything you'd like with the source, modify it, contribute to it, etc., but the license explicitly prohibits any form of monetization for Pearcleaner or any modified versions of it. See full license [HERE](https://github.com/alienator88/Pearcleaner/blob/main/LICENSE.md)
+> Pearcleaner is licensed under Apache 2.0 with [Commons Clause](https://commonsclause.com/). This means that you can use, modify, contribute to, and redistribute the source subject to the included terms, but the license prohibits selling Pearcleaner or modified versions of it. See the full [license](https://github.com/lukeskyscraper8/Pearcleaner/blob/main/LICENSE.md).
 
 ## Thanks
 
 - Much appreciation to [Freemacsoft's AppCleaner](https://freemacsoft.net/appcleaner/) and [Sun Knudsen's app-cleaner script](https://github.com/sunknudsen/guides/tree/main/archive/how-to-clean-uninstall-macos-apps-using-appcleaner-open-source-alternative) for the inspiration
 - [DharsanB](https://github.com/dharsanb) for sponsoring my Apple Developer account
 
-## Some of my apps
+## Upstream
 
-[Pearcleaner](https://github.com/alienator88/Pearcleaner) - An opensource app cleaner with privacy in mind
-
-[Sentinel](https://github.com/alienator88/Sentinel) - A GUI for controlling gatekeeper status on your Mac
-
-[Viz](https://github.com/alienator88/Viz) - Utility for extracting text from images, videos, qr/barcodes
-
-[PearHID](https://github.com/alienator88/PearHID) - Remap your macOS keyboard with a simple SwiftUI frontend
+Pearcleaner was created by [alienator88](https://github.com/alienator88). This fork preserves the original copyright, attribution, and license terms.
