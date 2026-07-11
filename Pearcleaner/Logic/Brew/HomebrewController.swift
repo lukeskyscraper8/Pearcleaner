@@ -288,8 +288,7 @@ class HomebrewController: ObservableObject {
             // Check for authentication failure
             let combinedOutput = output + error
             if isAuthenticationFailure(combinedOutput) {
-                printOS("🔐 Authentication failed, invalidating cache and retrying (attempt \(attemptCount + 1)/\(maxRetries))")
-                KeychainPasswordManager.shared.invalidateCache()
+                printOS("🔐 Authentication failed, retrying with a fresh prompt (attempt \(attemptCount + 1)/\(maxRetries))")
                 attemptCount += 1
 
                 if attemptCount < maxRetries {
@@ -337,35 +336,33 @@ class HomebrewController: ObservableObject {
 
         try process.run()
 
-        // Read pipes on background thread with console streaming
-        let (outputData, errorData) = await withCheckedContinuation { continuation in
-            Task.detached {
-                var outputData = Data()
-                var errorData = Data()
+        // Drain stdout and stderr concurrently. Reading one pipe to EOF before
+        // the other can deadlock when the child fills the unread pipe buffer.
+        let outputTask = Task.detached {
+            var data = Data()
+            let outputHandle = outputPipe.fileHandleForReading
 
-                let outputHandle = outputPipe.fileHandleForReading
-                let errorHandle = errorPipe.fileHandleForReading
+            while true {
+                let chunk = outputHandle.availableData
+                if chunk.isEmpty { break }
+                data.append(chunk)
 
-                // Read output with streaming to console
-                while true {
-                    let chunk = outputHandle.availableData
-                    if chunk.isEmpty { break }
-                    outputData.append(chunk)
-
-                    // Stream to console if enabled - check dynamically to support mid-operation console opening
-                    if let text = String(data: chunk, encoding: .utf8) {
-                        await MainActor.run {
-                            GlobalConsoleManager.shared.appendOutput(text, source: CurrentPage.homebrew.title)
-                        }
+                // Stream to console if enabled - check dynamically to support mid-operation console opening
+                if let text = String(data: chunk, encoding: .utf8) {
+                    await MainActor.run {
+                        GlobalConsoleManager.shared.appendOutput(text, source: CurrentPage.homebrew.title)
                     }
                 }
-
-                // Read error output
-                errorData = errorHandle.readDataToEndOfFile()
-
-                continuation.resume(returning: (outputData, errorData))
             }
+
+            return data
         }
+        let errorTask = Task.detached {
+            errorPipe.fileHandleForReading.readDataToEndOfFile()
+        }
+
+        let outputData = await outputTask.value
+        let errorData = await errorTask.value
 
         process.waitUntilExit()
 

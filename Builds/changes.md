@@ -1,15 +1,12 @@
-### What's New
+### Security
 
-- [x] Ability to hide unused utility pages from global menu in Settings > Interface > Startup View - #476
-- [x] "Update All" button now shows progress in toolbar for Updater view
-- [x] Add pinyin sorting to homebrew view and updater view - #479
-- [x] Warn if updating MAS app with a different source as it can break MAS connection - #484
+- Removed reusable sudo-password caching and cross-process password notifications.
+- Restricted the privileged helper to Pearcleaner's exact signed application identity.
+- Updated Sparkle to 2.9.4 for current security and reliability fixes.
+- Removed the unauthenticated settings-reset deep link.
 
 ### Fixes
 
-- [x] Fix pear list-orphaned cli command - #472
-- [x] Fix owner of receipt to root:wheel for installd workaround - #475
-- [x] Add contentShape around sidebar toggle icons - #485
-- [x] Fix computed property not refreshing action buttons in some cases for Updater view
-- [x] Reorder some layout components in Updater view
-- [x] Translations
+- Prevented Homebrew subprocesses from deadlocking when stdout and stderr are both busy.
+- Corrected updater, repository, release, and issue links for the maintained fork.
+- Updated Developer ID export settings and added automated build and security regression checks.

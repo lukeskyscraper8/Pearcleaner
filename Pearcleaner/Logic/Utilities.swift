@@ -11,11 +11,25 @@ import AlinFoundation
 import AppKit
 import AudioToolbox
 import OpenDirectory
+import Security
 
 extension String {
     var shellQuoted: String {
         "'\(replacingOccurrences(of: "'", with: "'\\''"))'"
     }
+}
+
+/// Removes credentials written by Pearcleaner versions that cached sudo
+/// passwords. The cache is no longer supported because a reusable password
+/// should never be exposed through an askpass command.
+func removeLegacySudoPasswordCache() {
+    let query: [String: Any] = [
+        kSecClass as String: kSecClassGenericPassword,
+        kSecAttrService as String: "com.lukerow.Pearcleaner.SudoPassword",
+        kSecAttrAccount as String: NSUserName()
+    ]
+    SecItemDelete(query as CFDictionary)
+    UserDefaults.standard.removeObject(forKey: "settings.general.sudoCacheTimeout")
 }
 
 func ifOSBelow(macOS major: Int, _ minor: Int = 0, _ patch: Int = 0) -> Bool {

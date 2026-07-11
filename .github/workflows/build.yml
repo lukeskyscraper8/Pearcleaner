@@ -1,0 +1,28 @@
+name: Build
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  build:
+    runs-on: macos-26
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Resolve package dependencies
+        run: xcodebuild -resolvePackageDependencies -project Pearcleaner.xcodeproj
+
+      - name: Build
+        run: >-
+          xcodebuild -quiet
+          -project Pearcleaner.xcodeproj
+          -scheme "Pearcleaner Debug"
+          -configuration Debug
+          -destination 'generic/platform=macOS'
+          -derivedDataPath .build/CI-DerivedData
+          CODE_SIGNING_ALLOWED=NO
+          build
+
+      - name: Security regression checks
+        run: ./script/security_regression_checks.sh .build/CI-DerivedData/Build/Products/Debug/Pearcleaner.app
