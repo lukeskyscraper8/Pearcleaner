@@ -4,6 +4,7 @@
 //
 //  Created by Alin Lupascu on 11/1/23.
 //
+// Modified for the independently maintained Pearcleaner fork.
 
 import AlinFoundation
 import Foundation
@@ -216,59 +217,88 @@ struct FilesView: View {
             message: String(localized: "Are you sure you want to remove these files?"),
             style: .warning,
             onOk: {
+                let appSnapshot = appState.appInfo
+                let selectedItemsSnapshot = Array(appState.selectedItems)
+                let brewCleanupEnabled = brew
+
                 Task {
-                    GlobalConsoleManager.shared.appendOutput("Starting deletion for \(appState.appInfo.appName)...\n", source: CurrentPage.applications.title)
-                    let selectedItemsArray = Array(appState.selectedItems)
+                    GlobalConsoleManager.shared.appendOutput(
+                        "Starting deletion for \(appSnapshot.appName)...\n",
+                        source: CurrentPage.applications.title
+                    )
                     var appWasRemoved = false
 
                     // Stop Sentinel FileWatcher momentarily to ignore .app bundle being sent to Trash
                     sendStopNotificationFW()
+                    defer {
+                        sendStartNotificationFW()
+                    }
 
                     // Kill the app before proceeding
-                    await killApp(appId: appState.appInfo.bundleIdentifier)
+                    await killApp(appId: appSnapshot.bundleIdentifier)
 
-                    // Trash the files
-                    let _ = moveFilesToTrash(appState: appState, at: selectedItemsArray)
+                    // Trash the files and update the UI from what actually moved.
+                    let deletionResult = moveFilesToTrashWithResult(at: selectedItemsSnapshot)
+                    let deletedItemsArray = deletionResult.movedURLs
 
-                    // Always cleanup UI, regardless of whether files physically existed
+                    guard !deletedItemsArray.isEmpty else {
+                        let message = deletionResult.protectedURLs.isEmpty
+                            ? "None of the selected files could be moved to Trash."
+                            : "Pearcleaner skipped \(deletionResult.protectedURLs.count) protected path(s). Privileged path-based Trash moves are disabled for safety, so no selected files were modified."
+                        GlobalConsoleManager.shared.appendOutput(
+                            "✗ No files were deleted for \(appSnapshot.appName)\n",
+                            source: CurrentPage.applications.title
+                        )
+                        showCustomAlert(
+                            title: "Deletion Failed",
+                            message: message,
+                            style: .critical
+                        )
+                        return
+                    }
+
+                    // Remove only files confirmed at their Trash destinations.
                     updateOnMain {
+                        guard appState.appInfo.path == appSnapshot.path else {
+                            return
+                        }
                         // Remove selected items from app's file list
                         appState.appInfo.fileSize = appState.appInfo.fileSize.filter {
-                            !selectedItemsArray.contains($0.key)
+                            !deletedItemsArray.contains($0.key)
                         }
                         appState.appInfo.fileIcon = appState.appInfo.fileIcon.filter {
-                            !selectedItemsArray.contains($0.key)
+                            !deletedItemsArray.contains($0.key)
                         }
-                        appState.selectedItems.removeAll()
+                        appState.selectedItems.subtract(Set(deletedItemsArray))
                         updateSortedFiles()
                     }
 
                     // Determine if it's a full delete
-                    let appPath = appState.appInfo.path.absoluteString
-                    let appRemoved = selectedItemsArray.contains(where: {
-                        $0.absoluteString == appPath
+                    let appPath = appSnapshot.path.standardizedFileURL
+                    let appRemoved = deletedItemsArray.contains(where: {
+                        $0.standardizedFileURL == appPath
                     })
 
                     // For wrapped apps, also check if the container is being deleted
                     let containerRemoved: Bool = {
-                        if appState.appInfo.wrapped {
+                        if appSnapshot.wrapped {
                             // Get container path by going up two levels from inner app
                             // e.g., Container.app/Wrapper/ActualApp.app -> Container.app
-                            let containerPath = appState.appInfo.path
+                            let containerPath = appSnapshot.path
                                 .deletingLastPathComponent()  // Remove ActualApp.app -> Container.app/Wrapper
                                 .deletingLastPathComponent()  // Remove Wrapper -> Container.app
 
-                            return selectedItemsArray.contains(where: {
-                                $0.absoluteString == containerPath.absoluteString
+                            return deletedItemsArray.contains(where: {
+                                $0.standardizedFileURL == containerPath.standardizedFileURL
                             })
                         }
                         return false
                     }()
 
-                    let mainAppRemoved = !appState.appInfo.wrapped && appRemoved
-                    let wrappedAppRemoved = appState.appInfo.wrapped && (appRemoved || containerRemoved)
+                    let mainAppRemoved = !appSnapshot.wrapped && appRemoved
+                    let wrappedAppRemoved = appSnapshot.wrapped && (appRemoved || containerRemoved)
 
-                    let isInTrash = appState.appInfo.path.path.contains(".Trash")
+                    let isInTrash = appSnapshot.path.pathComponents.contains(".Trash")
 
                     var deleteType: DeleteType
 
@@ -283,33 +313,57 @@ struct FilesView: View {
                         // The main app bundle is deleted or is already in Trash (Sentinel delete)
                         appWasRemoved = true
                         // Remove the app from the app list
-                        await removeApp(appState: appState, withPath: appState.appInfo.path)
-                        GlobalConsoleManager.shared.appendOutput("✓ Completed full deletion for \(appState.appInfo.appName)\n", source: CurrentPage.applications.title)
+                        await removeApp(appState: appState, withPath: appSnapshot.path)
+                        GlobalConsoleManager.shared.appendOutput(
+                            deletionResult.allSucceeded
+                                ? "✓ Completed full deletion for \(appSnapshot.appName)\n"
+                                : "⚠ Completed deletion for \(appSnapshot.appName), but \(deletionResult.failedURLs.count) item(s) failed\n",
+                            source: CurrentPage.applications.title
+                        )
 
                     case .semiDelete:
                         // Some files deleted but main app bundle remains
                         // App remains in the list; removes only deleted items
-                        GlobalConsoleManager.shared.appendOutput("✓ Completed partial deletion for \(appState.appInfo.appName)\n", source: CurrentPage.applications.title)
+                        GlobalConsoleManager.shared.appendOutput(
+                            deletionResult.allSucceeded
+                                ? "✓ Completed partial deletion for \(appSnapshot.appName)\n"
+                                : "⚠ Moved \(deletionResult.movedURLs.count) item(s), but \(deletionResult.failedURLs.count) item(s) failed\n",
+                            source: CurrentPage.applications.title
+                        )
                         break
+                    }
+
+                    if !deletionResult.allSucceeded {
+                        showCustomAlert(
+                            title: "Deletion Partially Completed",
+                            message: "\(deletionResult.movedURLs.count) item(s) were moved to Trash. \(deletionResult.failedURLs.count) item(s) could not be moved and remain selected.",
+                            style: .warning
+                        )
                     }
 
                     // Process the next app if in external mode
                     processNextExternalApp(
-                        appWasRemoved: appWasRemoved, isInTrash: isInTrash)
-
-                    // Send Sentinel FileWatcher start notification
-                    sendStartNotificationFW()
+                        appInfo: appSnapshot,
+                        appWasRemoved: appWasRemoved,
+                        isInTrash: isInTrash,
+                        brewCleanupEnabled: brewCleanupEnabled
+                    )
                 }
             })
     }
 
     // Helper function to process the next external app
-    private func processNextExternalApp(appWasRemoved: Bool, isInTrash: Bool) {
-        // Store the current app path before any removal
-        let currentAppPath = appState.appInfo.path
+    private func processNextExternalApp(
+        appInfo: AppInfo,
+        appWasRemoved: Bool,
+        isInTrash: Bool,
+        brewCleanupEnabled: Bool
+    ) {
+        let currentAppPath = appInfo.path
 
         // Check if the current app requires brew cleanup (Is brew cleanup enabled, was main app bundle removed or was main bundle in Trash)
-        if brew && (appWasRemoved || isInTrash), let caskName = appState.appInfo.cask {
+        if brewCleanupEnabled && (appWasRemoved || isInTrash),
+           let caskName = appInfo.cask {
             // Set flag to show progress indicator
             updateOnMain {
                 appState.isBrewCleanupInProgress = true
@@ -335,7 +389,10 @@ struct FilesView: View {
                 }
 
                 // Process remaining apps (transitions UI state)
-                await processRemainingApps(appWasRemoved: appWasRemoved)
+                await processRemainingApps(
+                    appWasRemoved: appWasRemoved,
+                    expectedAppPath: currentAppPath
+                )
 
                 // Clear progress flag AFTER UI has transitioned
                 await MainActor.run {
@@ -352,12 +409,22 @@ struct FilesView: View {
 
         // Continue processing remaining apps
         Task {
-            await processRemainingApps(appWasRemoved: appWasRemoved)
+            await processRemainingApps(
+                appWasRemoved: appWasRemoved,
+                expectedAppPath: currentAppPath
+            )
         }
     }
 
     // Helper function to process remaining apps after current app is done
-    private func processRemainingApps(appWasRemoved: Bool) async {
+    private func processRemainingApps(
+        appWasRemoved: Bool,
+        expectedAppPath: URL
+    ) async {
+        guard appState.appInfo.path == expectedAppPath else {
+            return
+        }
+
         // Check if there are more paths to process
         if !appState.externalPaths.isEmpty {
             // Get the next path

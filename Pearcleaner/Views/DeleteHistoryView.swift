@@ -4,6 +4,7 @@
 //
 //  Created by Alin Lupascu on 11/10/25.
 //
+// Modified for the independently maintained Pearcleaner fork.
 
 import SwiftUI
 import AlinFoundation
@@ -151,7 +152,17 @@ struct DeleteHistoryView: View {
                     if appState.currentPage == .plugins {
                         NotificationCenter.default.post(name: NSNotification.Name("PluginsViewShouldRefresh"), object: nil)
                     } else if appState.currentPage == .fileSearch {
-                        NotificationCenter.default.post(name: NSNotification.Name("FileSearchViewShouldUndo"), object: nil)
+                        // History can restore any recorded action, not necessarily
+                        // File Search's latest in-memory cache entry.
+                        NotificationCenter.default.post(
+                            name: NSNotification.Name("FileSearchViewShouldRefresh"),
+                            object: nil,
+                            userInfo: [
+                                "restoredPaths": recordsToRestore.flatMap {
+                                    $0.filePairs.map { $0.original }
+                                }
+                            ]
+                        )
                     } else if appState.currentPage == .orphans {
                         NotificationCenter.default.post(name: NSNotification.Name("ZombieViewShouldRefresh"), object: nil)
                     } else if appState.currentPage == .packages {

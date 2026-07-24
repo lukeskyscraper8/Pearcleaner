@@ -45,7 +45,7 @@ class SparkleUpdateOperation: Operation, @unchecked Sendable {
 
         // Sparkle must be initialized and started on the main thread
         DispatchQueue.main.sync {
-            let driver = SparkleUpdateDriver(
+            guard let driver = SparkleUpdateDriver(
                 appInfo: app.appInfo,
                 includePreReleases: includePreReleases,
                 cachedAppcastItem: app.appcastItem,  // Pass cached item from check phase
@@ -59,7 +59,14 @@ class SparkleUpdateOperation: Operation, @unchecked Sendable {
                     // Signal the semaphore to unblock the operation
                     self.semaphore.signal()
                 }
-            )
+            ) else {
+                completionCallback(
+                    false,
+                    SparkleUpdateDriverError.invalidAppBundle(app.appInfo.path)
+                )
+                semaphore.signal()
+                return
+            }
 
             driver.startUpdate()
         }

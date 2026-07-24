@@ -4,6 +4,7 @@
 //
 //  Created by Alin Lupascu on 10/01/25.
 //
+//  Modified for the independently maintained Pearcleaner fork.
 
 import SwiftUI
 import AlinFoundation
@@ -86,9 +87,14 @@ struct SearchInstallSection: View {
             for package in packages {
                 printOS("Starting update for: \(package.name)")
                 updatingPackages.insert(package.name)
+                let shortName = package.name.components(separatedBy: "/").last
+                    ?? package.name
+                let isCask = brewManager.installedCasks.contains {
+                    $0.name == package.name || $0.name == shortName
+                }
 
                 do {
-                    try await HomebrewController.shared.upgradePackage(name: package.name)
+                    try await HomebrewController.shared.upgradePackage(name: package.name, cask: isCask)
                     printOS("Successfully updated: \(package.name)")
                     updatedPackageNames.append(package.name)
 
@@ -858,7 +864,7 @@ struct SearchResultRowView: View {
                     defer { Task { @MainActor in isInstalling = false } }
 
                     do {
-                        try await HomebrewController.shared.upgradePackage(name: result.name)
+                        try await HomebrewController.shared.upgradePackage(name: result.name, cask: isCask)
 
                         // Targeted refresh - only update this specific package (much faster than full scan)
                         await brewManager.refreshSpecificPackages([result.name])
@@ -975,7 +981,7 @@ struct SearchResultRowView: View {
                 // Perform the update
                 var updateSucceeded = false
                 do {
-                    try await HomebrewController.shared.upgradePackage(name: result.name)
+                    try await HomebrewController.shared.upgradePackage(name: result.name, cask: isCask)
                     updateSucceeded = true
                 } catch {
                     // Re-pin if update failed and package was originally pinned

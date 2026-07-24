@@ -2,6 +2,7 @@
 //  DeepLink.swift
 //  Pearcleaner
 //
+//  Modified for the independently maintained Pearcleaner fork.
 //  Created by Alin Lupascu on 11/9/23.
 //
 
@@ -248,7 +249,9 @@ class DeeplinkManager {
             appState.currentPage = .lipo
             break
         case DeepLinkActions.checkUpdates:
-            updater.checkForUpdates(sheet: true)
+            Task { @MainActor in
+                updater.checkForUpdates(sheet: true)
+            }
             break
         case DeepLinkActions.appsPaths:
             if let actionType = queryItems.first(where: { $0.name == "add" || $0.name == "remove" })?.name,

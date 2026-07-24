@@ -3,6 +3,7 @@
 //  Pearcleaner
 //
 //  Created by Alin Lupascu on 11/5/23.
+//  Modified for the independently maintained Pearcleaner fork.
 //
 
 import SwiftUI
@@ -33,7 +34,12 @@ struct AboutSettingsTab: View {
                 }
                 .foregroundStyle(ThemeColors.shared(for: colorScheme).primaryText)
 
-                Text("Made with ❤️ by Alin Lupascu").foregroundStyle(ThemeColors.shared(for: colorScheme).primaryText).font(.footnote)
+                Text("Created by Alin Lupascu")
+                    .foregroundStyle(ThemeColors.shared(for: colorScheme).primaryText)
+                    .font(.footnote)
+                Text("Independently maintained fork by Luke Row")
+                    .foregroundStyle(ThemeColors.shared(for: colorScheme).secondaryText)
+                    .font(.footnote)
 
             }
             .padding(.vertical, 50)
@@ -51,7 +57,7 @@ struct AboutSettingsTab: View {
                             .padding(.trailing)
 
                         VStack(alignment: .leading){
-                            Text("Submit a bug or feature request")
+                            Text("Report a bug or request support")
                                 .font(.title3)
                                 .foregroundStyle(ThemeColors.shared(for: colorScheme).primaryText)
 
@@ -139,7 +145,13 @@ struct AboutSettingsTab: View {
     private func exportUserDefaults() {
         let defaults = UserDefaults.standard.dictionaryRepresentation()
         let settingsOnly = defaults.filter { $0.key.hasPrefix("settings.") }
-        guard let jsonData = try? JSONSerialization.data(withJSONObject: settingsOnly, options: [.prettyPrinted]) else { return }
+        let jsonData: Data
+        do {
+            jsonData = try SettingsExportCodec.exportData(from: settingsOnly)
+        } catch {
+            printOS("Settings export failed: \(error.localizedDescription)")
+            return
+        }
 
         let savePanel = NSSavePanel()
         savePanel.directoryURL = FileManager.default.urls(for: .downloadsDirectory, in: .userDomainMask).first
@@ -147,7 +159,11 @@ struct AboutSettingsTab: View {
         savePanel.nameFieldStringValue = "PearcleanerSettings.json"
         savePanel.begin { response in
             guard response == .OK, let url = savePanel.url else { return }
-            try? jsonData.write(to: url)
+            do {
+                try jsonData.write(to: url, options: .atomic)
+            } catch {
+                printOS("Settings export write failed: \(error.localizedDescription)")
+            }
         }
     }
 
@@ -157,11 +173,15 @@ struct AboutSettingsTab: View {
         openPanel.allowedContentTypes = [.json]
         openPanel.begin { response in
             guard response == .OK, let url = openPanel.url,
-                  let data = try? Data(contentsOf: url),
-                  let dict = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return }
+                  let data = try? Data(contentsOf: url) else { return }
 
-            for (key, value) in dict {
-                UserDefaults.standard.setValue(value, forKey: key)
+            do {
+                let settings = try SettingsExportCodec.importSettings(from: data)
+                for (key, value) in settings {
+                    UserDefaults.standard.set(value, forKey: key)
+                }
+            } catch {
+                printOS("Settings import failed: \(error.localizedDescription)")
             }
         }
     }

@@ -5,9 +5,21 @@
 //  Custom SPUUserDriver for programmatically controlling Sparkle updates.
 //  Allows Pearcleaner to download and install updates for third-party Sparkle apps directly.
 //
+//  Modified for the independently maintained Pearcleaner fork.
 
 import Foundation
 import Sparkle
+
+enum SparkleUpdateDriverError: LocalizedError {
+    case invalidAppBundle(URL)
+
+    var errorDescription: String? {
+        switch self {
+        case .invalidAppBundle(let url):
+            return "The app at \(url.path) is no longer a valid bundle."
+        }
+    }
+}
 
 class SparkleUpdateDriver: NSObject, SPUUserDriver, SPUUpdaterDelegate, @unchecked Sendable {
 
@@ -22,18 +34,20 @@ class SparkleUpdateDriver: NSObject, SPUUserDriver, SPUUpdaterDelegate, @uncheck
 
     private var downloadedBytes: Int64 = 0
     private var totalBytes: Int64 = 0
+    private let completionLock = NSLock()
+    private var hasCompleted = false
 
     private let logger = UpdaterDebugLogger.shared
 
     // MARK: - Initialization
 
-    init(appInfo: AppInfo,
-         includePreReleases: Bool,
-         cachedAppcastItem: SUAppcastItem?,
-         progressCallback: @escaping (Double, UpdateStatus) -> Void,
-         completionCallback: @escaping (Bool, Error?) -> Void) {
+    init?(appInfo: AppInfo,
+          includePreReleases: Bool,
+          cachedAppcastItem: SUAppcastItem?,
+          progressCallback: @escaping (Double, UpdateStatus) -> Void,
+          completionCallback: @escaping (Bool, Error?) -> Void) {
         guard let bundle = Bundle(url: appInfo.path) else {
-            fatalError("Could not create bundle for app at \(appInfo.path)")
+            return nil
         }
         self.appBundle = bundle
         self.includePreReleases = includePreReleases
@@ -51,6 +65,24 @@ class SparkleUpdateDriver: NSObject, SPUUserDriver, SPUUpdaterDelegate, @uncheck
     }
 
     // MARK: - Public Methods
+
+    private func finish(success: Bool, error: Error?) {
+        completionLock.lock()
+        guard !hasCompleted else {
+            completionLock.unlock()
+            return
+        }
+        hasCompleted = true
+        completionLock.unlock()
+        completionCallback(success, error)
+
+        // SPUUpdater retains its user driver. Release our reference on the next
+        // main-actor turn, after Sparkle's synchronous acknowledgement returns,
+        // so terminal update checks cannot leak the driver/updater cycle.
+        Task { @MainActor [weak self] in
+            self?.updater = nil
+        }
+    }
 
     func startUpdate() {
         logger.log(.sparkle, "━━━ Starting Sparkle update for \(appBundle.bundleIdentifier ?? "unknown")")
@@ -84,7 +116,7 @@ class SparkleUpdateDriver: NSObject, SPUUserDriver, SPUUpdaterDelegate, @uncheck
             Task { @MainActor in
                 GlobalConsoleManager.shared.appendOutput("✗ Failed to start Sparkle updater: \(error.localizedDescription)\n", source: CurrentPage.updater.title)
             }
-            completionCallback(false, error)
+            finish(success: false, error: error)
         }
     }
 
@@ -190,7 +222,7 @@ class SparkleUpdateDriver: NSObject, SPUUserDriver, SPUUpdaterDelegate, @uncheck
         }
 
         progressCallback(1.0, .completed)
-        completionCallback(true, nil)
+        finish(success: true, error: nil)
         acknowledgement()
     }
 
@@ -209,7 +241,7 @@ class SparkleUpdateDriver: NSObject, SPUUserDriver, SPUUpdaterDelegate, @uncheck
             GlobalConsoleManager.shared.appendOutput("✗ Sparkle updater error: \(error.localizedDescription)\n", source: CurrentPage.updater.title)
         }
 
-        completionCallback(false, error)
+        finish(success: false, error: error)
         acknowledgement()
     }
 
@@ -231,6 +263,12 @@ class SparkleUpdateDriver: NSObject, SPUUserDriver, SPUUpdaterDelegate, @uncheck
             GlobalConsoleManager.shared.appendOutput("No update available: \(error.localizedDescription)\n", source: CurrentPage.updater.title)
         }
 
+        // The queued operation waits on its completion callback. Treat a
+        // no-update response as a successful terminal state so the next app
+        // can proceed, while preserving the error so callers do not report
+        // that an installation occurred.
+        progressCallback(0.0, .idle)
+        finish(success: true, error: error)
         acknowledgement()
     }
 

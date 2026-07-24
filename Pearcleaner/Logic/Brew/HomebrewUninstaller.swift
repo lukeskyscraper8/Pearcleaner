@@ -223,7 +223,11 @@ class HomebrewUninstaller {
         // Delete all collected files in one batch with cask name
         if !filesToDelete.isEmpty {
             let bundleName = "\(token) (Homebrew Cask)"
-            let _ = FileManagerUndo.shared.deleteFiles(at: filesToDelete, bundleName: bundleName)
+            try trashFilesOrThrow(
+                filesToDelete,
+                bundleName: bundleName,
+                operation: "Uninstalling \(token)"
+            )
         }
     }
 
@@ -361,7 +365,11 @@ class HomebrewUninstaller {
 
                     // Batch delete collected paths
                     if !pathsToDelete.isEmpty {
-                        let _ = FileManagerUndo.shared.deleteFiles(at: pathsToDelete, bundleName: "Homebrew-\(name)")
+                        try trashFilesOrThrow(
+                            pathsToDelete,
+                            bundleName: "Homebrew-\(name)",
+                            operation: "Removing formula \(name)"
+                        )
                     }
                 }
             } else if !result.error.isEmpty && !result.error.contains("Warning") {
@@ -388,7 +396,11 @@ class HomebrewUninstaller {
 
                 // Batch delete collected paths
                 if !pathsToDelete.isEmpty {
-                    let _ = FileManagerUndo.shared.deleteFiles(at: pathsToDelete, bundleName: "Homebrew-\(name)")
+                    try trashFilesOrThrow(
+                        pathsToDelete,
+                        bundleName: "Homebrew-\(name)",
+                        operation: "Removing formula \(name)"
+                    )
                 } else {
                     throw HomebrewError.commandFailed("Formula \(name) is not installed")
                 }
@@ -442,7 +454,11 @@ class HomebrewUninstaller {
             plistPaths.append(URL(fileURLWithPath: userPlistPath))
         }
         if !plistPaths.isEmpty {
-            let _ = FileManagerUndo.shared.deleteFiles(at: plistPaths, bundleName: "Homebrew-LaunchAgent")
+            try trashFilesOrThrow(
+                plistPaths,
+                bundleName: "Homebrew-LaunchAgent",
+                operation: "Removing launch service \(value)"
+            )
         }
     }
 
@@ -516,7 +532,11 @@ class HomebrewUninstaller {
 
         // Batch delete collected paths
         if !pathsToDelete.isEmpty {
-            let _ = FileManagerUndo.shared.deleteFiles(at: pathsToDelete, bundleName: "Homebrew-PKG-\(value)")
+            try trashFilesOrThrow(
+                pathsToDelete,
+                bundleName: "Homebrew-PKG-\(value)",
+                operation: "Removing package receipt files for \(value)"
+            )
         }
 
         // Forget the package
@@ -528,7 +548,11 @@ class HomebrewUninstaller {
 
         if FileManager.default.fileExists(atPath: expandedPath) {
             // Use trash for all deletions
-            let _ = FileManagerUndo.shared.deleteFiles(at: [URL(fileURLWithPath: expandedPath)], bundleName: "Homebrew-Delete")
+            try trashFilesOrThrow(
+                [URL(fileURLWithPath: expandedPath)],
+                bundleName: "Homebrew-Delete",
+                operation: "Removing \(expandedPath)"
+            )
         }
     }
 
@@ -537,7 +561,11 @@ class HomebrewUninstaller {
 
         if FileManager.default.fileExists(atPath: expandedPath) {
             // Use FileManagerUndo to properly move to trash
-            let _ = FileManagerUndo.shared.deleteFiles(at: [URL(fileURLWithPath: expandedPath)], bundleName: "Homebrew-Trash")
+            try trashFilesOrThrow(
+                [URL(fileURLWithPath: expandedPath)],
+                bundleName: "Homebrew-Trash",
+                operation: "Trashing \(expandedPath)"
+            )
         }
     }
 
@@ -549,12 +577,38 @@ class HomebrewUninstaller {
             let contents = try FileManager.default.contentsOfDirectory(atPath: expandedPath)
             if contents.isEmpty {
                 // Use trash even for empty directories
-                let _ = FileManagerUndo.shared.deleteFiles(at: [URL(fileURLWithPath: expandedPath)], bundleName: "Homebrew-Rmdir")
+                try trashFilesOrThrow(
+                    [URL(fileURLWithPath: expandedPath)],
+                    bundleName: "Homebrew-Rmdir",
+                    operation: "Removing empty directory \(expandedPath)"
+                )
             }
         }
     }
 
     // MARK: - Helper Methods
+
+    private func trashFilesOrThrow(
+        _ urls: [URL],
+        bundleName: String,
+        operation: String
+    ) throws {
+        let result = FileManagerUndo.shared.deleteFilesWithResult(
+            at: urls,
+            bundleName: bundleName
+        )
+        guard result.allSucceeded else {
+            if !result.protectedURLs.isEmpty {
+                throw HomebrewError.commandFailed(
+                    "\(operation) was not completed. Protected paths cannot be moved to Trash through Pearcleaner's privileged helper; remove them manually or use Homebrew directly."
+                )
+            }
+
+            throw HomebrewError.commandFailed(
+                "\(operation) was only partially completed: \(result.movedURLs.count) of \(result.requestedURLs.count) item(s) were moved to Trash."
+            )
+        }
+    }
 
     private func expandPath(_ path: String) -> String {
         if path.hasPrefix("~") {

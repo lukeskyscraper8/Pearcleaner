@@ -3,6 +3,7 @@
 //  Pearcleaner
 //
 //  Created by Alin Lupascu on 11/3/23.
+//  Modified for the independently maintained Pearcleaner fork.
 //
 
 import Foundation
@@ -12,6 +13,7 @@ import AppKit
 import AudioToolbox
 import OpenDirectory
 import Security
+import Darwin
 
 extension String {
     var shellQuoted: String {
@@ -55,24 +57,57 @@ func playTrashSound(undo: Bool = false) {
 
 // Check if pear symlink exists
 func checkCLISymlink() -> Bool {
-    let filePath = "/usr/local/bin/pear"
-    let fileManager = FileManager.default
+    guard let executablePath = Bundle.main.executablePath else {
+        return false
+    }
+    return managedCLISymlinkMatchesExecutable(
+        at: "/usr/local/bin/pear",
+        executablePath: executablePath
+    )
+}
 
-    guard fileManager.fileExists(atPath: filePath) else { return false }
+func managedCLISymlinkMatchesExecutable(
+    at symlinkPath: String,
+    executablePath: String
+) -> Bool {
+    var fileInfo = stat()
+    guard lstat(symlinkPath, &fileInfo) == 0,
+          (fileInfo.st_mode & S_IFMT) == S_IFLNK else {
+        return false
+    }
 
     do {
-        let destination = try fileManager.destinationOfSymbolicLink(atPath: filePath)
-        return destination == Bundle.main.executablePath
+        let destination = try FileManager.default.destinationOfSymbolicLink(
+            atPath: symlinkPath
+        )
+        let destinationURL = destination.hasPrefix("/")
+            ? URL(fileURLWithPath: destination)
+            : URL(fileURLWithPath: symlinkPath)
+                .deletingLastPathComponent()
+                .appendingPathComponent(destination)
+        return destinationURL.standardizedFileURL ==
+            URL(fileURLWithPath: executablePath).standardizedFileURL
     } catch {
         return false
+    }
+}
+
+func cliSymlinkAncestryAllowsPrivilege(
+    _ requiredDirectories: [URL],
+    isRealDirectory: (URL) -> Bool = pathIsDirectoryWithoutFollowingSymlinks,
+    isWritable: (URL) -> Bool = {
+        FileManager.default.isWritableFile(atPath: $0.path)
+    }
+) -> Bool {
+    requiredDirectories.allSatisfy {
+        isRealDirectory($0) && !isWritable($0)
     }
 }
 
 // Fix legacy pearcleaner symlink if it exists
 func fixLegacySymlink() {
     let legacyPath = "/usr/local/bin/pearcleaner"
-    let fileManager = FileManager.default
-    if fileManager.fileExists(atPath: legacyPath) {
+    if pathExistsWithoutFollowingSymlinks(URL(fileURLWithPath: legacyPath)) {
         manageSymlink(install: false, symlinkName: "pearcleaner")
         manageSymlink(install: true, symlinkName: "pear")
     }
@@ -82,17 +117,39 @@ func fixLegacySymlink() {
 func manageSymlink(install: Bool, symlinkName: String = "pear") {
     @AppStorage("settings.general.cli") var isCLISymlinked = false
 
+    guard ["pear", "pearcleaner"].contains(symlinkName) else {
+        printOS("Symlink operation rejected: Unsupported CLI symlink name.")
+        return
+    }
+
     guard let appPath = Bundle.main.executablePath else {
         printOS("Error: Unable to get the executable path.")
         return
     }
 
     let symlinkPath = "/usr/local/bin/\(symlinkName)"
-    let symlinkExists = FileManager.default.fileExists(atPath: symlinkPath)
-    let binPathExists = directoryExists(at: "/usr/local/bin")
+    let symlinkURL = URL(fileURLWithPath: symlinkPath)
+    let rootURL = URL(fileURLWithPath: "/", isDirectory: true)
+    let usrURL = URL(fileURLWithPath: "/usr", isDirectory: true)
+    let localURL = URL(fileURLWithPath: "/usr/local", isDirectory: true)
+    let binURL = URL(fileURLWithPath: "/usr/local/bin", isDirectory: true)
+    let fileManager = FileManager.default
+    let symlinkExists = pathExistsWithoutFollowingSymlinks(symlinkURL)
 
     if install && symlinkExists {
-        printOS("Symlink already exists at \(symlinkPath). No action needed.")
+        if managedCLISymlinkMatchesExecutable(
+            at: symlinkPath,
+            executablePath: appPath
+        ) {
+            printOS("Symlink already exists at \(symlinkPath). No action needed.")
+        } else {
+            printOS(
+                "Symlink creation rejected: An unmanaged item already exists at \(symlinkPath)."
+            )
+        }
+        updateOnMain {
+            isCLISymlinked = checkCLISymlink()
+        }
         return
     }
 
@@ -101,31 +158,184 @@ func manageSymlink(install: Bool, symlinkName: String = "pear") {
         return
     }
 
-    // Prepare privileged commands
-    var command = ""
-
+    let privilegedCommand: String
+    let privilegedRequiresExistingBin: Bool
     if install {
-        // Create the /usr/local/bin directory if it doesn't exist, then create symlink
-        if !binPathExists {
-            command += "mkdir -p /usr/local/bin && "
+        guard pathIsDirectoryWithoutFollowingSymlinks(rootURL),
+              pathIsDirectoryWithoutFollowingSymlinks(usrURL),
+              pathIsDirectoryWithoutFollowingSymlinks(localURL) else {
+            printOS(
+                "Symlink creation rejected: /usr/local has an unexpected or symlinked path ancestry."
+            )
+            return
         }
-        command += "ln -s \(appPath.shellQuoted) \(symlinkPath.shellQuoted)"
+
+        let binExists = pathExistsWithoutFollowingSymlinks(binURL)
+        if binExists && !pathIsDirectoryWithoutFollowingSymlinks(binURL) {
+            printOS(
+                "Symlink creation rejected: /usr/local/bin is not a real directory."
+            )
+            return
+        }
+
+        if binExists && fileManager.isWritableFile(atPath: binURL.path) {
+            do {
+                guard !pathExistsWithoutFollowingSymlinks(symlinkURL) else {
+                    throw NSError(
+                        domain: "PearcleanerCLISymlink",
+                        code: 1,
+                        userInfo: [NSLocalizedDescriptionKey: "The destination appeared before creation."]
+                    )
+                }
+                try fileManager.createSymbolicLink(
+                    at: symlinkURL,
+                    withDestinationURL: URL(fileURLWithPath: appPath)
+                )
+            } catch {
+                printOS("Symlink creation failed: \(error.localizedDescription)")
+            }
+            updateOnMain {
+                isCLISymlinked = checkCLISymlink()
+            }
+            return
+        }
+
+        if !binExists && fileManager.isWritableFile(atPath: localURL.path) {
+            do {
+                try fileManager.createDirectory(
+                    at: binURL,
+                    withIntermediateDirectories: false
+                )
+                guard pathIsDirectoryWithoutFollowingSymlinks(binURL),
+                      !pathExistsWithoutFollowingSymlinks(symlinkURL) else {
+                    throw NSError(
+                        domain: "PearcleanerCLISymlink",
+                        code: 2,
+                        userInfo: [NSLocalizedDescriptionKey: "The CLI directory changed before creation."]
+                    )
+                }
+                try fileManager.createSymbolicLink(
+                    at: symlinkURL,
+                    withDestinationURL: URL(fileURLWithPath: appPath)
+                )
+            } catch {
+                printOS("Symlink creation failed: \(error.localizedDescription)")
+            }
+            updateOnMain {
+                isCLISymlinked = checkCLISymlink()
+            }
+            return
+        }
+
+        let protectedDirectories = binExists
+            ? [rootURL, usrURL, localURL, binURL]
+            : [rootURL, usrURL, localURL]
+        guard cliSymlinkAncestryAllowsPrivilege(protectedDirectories) else {
+            printOS(
+                "Symlink creation rejected: A user-writable ancestor could be swapped during authorization."
+            )
+            return
+        }
+
+        privilegedRequiresExistingBin = binExists
+        privilegedCommand = binExists
+            ? "/bin/ln -s \(appPath.shellQuoted) \(symlinkPath.shellQuoted)"
+            : "/bin/mkdir /usr/local/bin && /bin/ln -s \(appPath.shellQuoted) \(symlinkPath.shellQuoted)"
     } else {
-        // Remove the symlink using FileManagerUndo for safe trash deletion
-        let _ = FileManagerUndo.shared.deleteFiles(at: [URL(fileURLWithPath: symlinkPath)], bundleName: "CLI-Symlink")
-        return
+        guard managedCLISymlinkMatchesExecutable(
+            at: symlinkPath,
+            executablePath: appPath
+        ) else {
+            printOS(
+                "Symlink removal rejected: \(symlinkPath) is not a Pearcleaner-managed symlink."
+            )
+            updateOnMain {
+                isCLISymlinked = checkCLISymlink()
+            }
+            return
+        }
+
+        guard [rootURL, usrURL, localURL, binURL].allSatisfy(
+            pathIsDirectoryWithoutFollowingSymlinks
+        ) else {
+            printOS(
+                "Symlink removal rejected: /usr/local/bin has an unexpected or symlinked path ancestry."
+            )
+            return
+        }
+
+        if fileManager.isWritableFile(atPath: binURL.path) {
+            do {
+                try fileManager.removeItem(at: symlinkURL)
+            } catch {
+                printOS("Symlink removal failed: \(error.localizedDescription)")
+            }
+            updateOnMain {
+                isCLISymlinked = checkCLISymlink()
+            }
+            return
+        }
+
+        guard cliSymlinkAncestryAllowsPrivilege(
+            [rootURL, usrURL, localURL, binURL]
+        ) else {
+            printOS(
+                "Symlink removal rejected: A user-writable or symlinked ancestor could be swapped during authorization."
+            )
+            return
+        }
+        privilegedRequiresExistingBin = true
+        privilegedCommand = "/bin/rm -f -- \(symlinkPath.shellQuoted)"
     }
 
-    // Perform privileged commands using unified wrapper (only for creating symlink)
+    // Perform privileged commands using the unified wrapper.
     Task {
-        let result = try! await runSUCommand(
-            command,
-            errorContext: "Failed to create CLI symlink",
-            throwOnFailure: false
-        )
+        do {
+            let operation = install ? "create" : "remove"
+            let protectedDirectories = privilegedRequiresExistingBin
+                ? [rootURL, usrURL, localURL, binURL]
+                : [rootURL, usrURL, localURL]
+            guard cliSymlinkAncestryAllowsPrivilege(protectedDirectories),
+                  (
+                    privilegedRequiresExistingBin
+                        ? pathIsDirectoryWithoutFollowingSymlinks(binURL)
+                        : !pathExistsWithoutFollowingSymlinks(binURL)
+                  ) else {
+                printOS(
+                    "CLI symlink \(operation) rejected: The path ancestry changed before authorization."
+                )
+                return
+            }
+            if install {
+                guard !pathExistsWithoutFollowingSymlinks(symlinkURL) else {
+                    printOS(
+                        "CLI symlink creation rejected: The destination appeared before creation."
+                    )
+                    return
+                }
+            } else {
+                guard managedCLISymlinkMatchesExecutable(
+                    at: symlinkPath,
+                    executablePath: appPath
+                ) else {
+                    printOS(
+                        "CLI symlink removal rejected: The managed symlink changed before removal."
+                    )
+                    return
+                }
+            }
 
-        if !result.0 {
-            printOS("Symlink creation failed: \(result.1)")
+            let result = try await runSUCommand(
+                privilegedCommand,
+                errorContext: "Failed to \(operation) CLI symlink",
+                throwOnFailure: false
+            )
+
+            if !result.0 {
+                printOS("Symlink \(operation) failed: \(result.1)")
+            }
+        } catch {
+            printOS("CLI symlink operation failed: \(error.localizedDescription)")
         }
 
         updateOnMain {
@@ -138,25 +348,6 @@ func directoryExists(at path: String) -> Bool {
     let fileManager = FileManager.default
     return fileManager.fileExists(atPath: path, isDirectory: nil)
 }
-
-/// Clean up all stale /tmp/pearcleaner* directories
-/// Used before creating new temp directories to avoid conflicts from previous failed operations
-func cleanupPearcleanerTempDirs() {
-    let tmpDir = URL(fileURLWithPath: "/tmp")
-
-    guard let contents = try? FileManager.default.contentsOfDirectory(
-        at: tmpDir,
-        includingPropertiesForKeys: nil
-    ) else {
-        return
-    }
-
-    for item in contents where item.lastPathComponent.hasPrefix("pearcleaner") {
-        try? FileManager.default.removeItem(at: item)
-    }
-}
-
-
 
 // Open trash folder
 func openTrash() {
@@ -195,186 +386,206 @@ func checkAppBundleArchitecture(at appBundlePath: String) -> Arch {
 
         let executableURL = bundleURL.appendingPathComponent("Contents/MacOS").appendingPathComponent(execName)
 
-        // Use FileHandle to read only the header bytes needed for architecture detection
-        guard let fileHandle = try? FileHandle(forReadingFrom: executableURL) else {
-            return .empty
-        }
-        defer {
-            try? fileHandle.close()
-        }
-
-        // Read first 8 bytes for magic and initial header
-        guard let headerData = try? fileHandle.read(upToCount: 8), headerData.count >= 4 else {
+        guard let layout = try? MachOSafety.inspect(executableURL) else {
             return .empty
         }
 
-        // Check for fat (universal) binary
-        let magic = headerData.prefix(4).withUnsafeBytes { $0.load(as: UInt32.self).bigEndian }
-        let FAT_MAGIC: UInt32 = 0xcafebabe
-
-        if magic == FAT_MAGIC {
-            // Fat binary - read architecture count
-            guard headerData.count >= 8 else { return .empty }
-            let numArchs = headerData.subdata(in: 4..<8).withUnsafeBytes { $0.load(as: UInt32.self).bigEndian }
-
-            // Read all architecture headers at once (20 bytes each)
-            let archHeadersSize = Int(numArchs) * 20
-            guard let archHeadersData = try? fileHandle.read(upToCount: archHeadersSize),
-                  archHeadersData.count == archHeadersSize else {
-                return .empty
+        switch layout {
+        case .fat(let architectures, _):
+            let hasArm = architectures.contains {
+                $0.cpuType == MachOSafety.arm64CPUType
             }
-
-            var archs: [Arch] = []
-            var offset = 0
-            for _ in 0..<numArchs {
-                let archData = archHeadersData[offset..<(offset + 20)].withUnsafeBytes { ptr in
-                    FatArch(
-                        cpuType: ptr.load(fromByteOffset: 0, as: UInt32.self).bigEndian,
-                        cpuSubtype: ptr.load(fromByteOffset: 4, as: UInt32.self).bigEndian,
-                        offset: ptr.load(fromByteOffset: 8, as: UInt32.self).bigEndian,
-                        size: ptr.load(fromByteOffset: 12, as: UInt32.self).bigEndian,
-                        align: ptr.load(fromByteOffset: 16, as: UInt32.self).bigEndian
-                    )
-                }
-                if archData.cpuType == 0x0100000c { archs.append(.arm) }
-                else if archData.cpuType == 0x01000007 { archs.append(.intel) }
-                offset += 20
+            let hasIntel = architectures.contains {
+                $0.cpuType == MachOSafety.x86_64CPUType
             }
-            return archs.count == 1 ? archs.first! : .universal
-        } else {
-            // Single architecture Mach-O binary: read cpu type from header
-            guard headerData.count >= 8 else { return .empty }
-
-            // Check magic number for 64-bit Mach-O
-            let magic = headerData.prefix(4).withUnsafeBytes { $0.load(as: UInt32.self) }
-
-            if magic == 0xfeedfacf || magic == 0xcffaedfe {
-                // 64-bit Mach-O - read CPU type
-                let cputypeLittle = headerData.subdata(in: 4..<8).withUnsafeBytes { $0.load(as: UInt32.self) }
-                let cputypeBig = headerData.subdata(in: 4..<8).withUnsafeBytes { $0.load(as: UInt32.self).bigEndian }
-
-                // ARM64 detection
-                if cputypeLittle == 0x0100000c || cputypeBig == 0x0c000001 {
-                    return .arm
-                }
-                // x86_64 detection
-                else if cputypeLittle == 0x01000007 || cputypeBig == 0x07000001 {
-                    return .intel
-                }
-            } else if magic == 0xfeedface || magic == 0xcefaedfe {
-                // 32-bit Mach-O (less common)
-                let cputypeLittle = headerData.subdata(in: 4..<8).withUnsafeBytes { $0.load(as: UInt32.self) }
-                let cputypeBig = headerData.subdata(in: 4..<8).withUnsafeBytes { $0.load(as: UInt32.self).bigEndian }
-
-                // ARM64 and x86_64 with 32-bit magic (edge case)
-                if cputypeLittle == 0x0100000c || cputypeBig == 0x0c000001 {
-                    return .arm
-                }
-                else if cputypeLittle == 0x01000007 || cputypeBig == 0x07000001 {
-                    return .intel
-                }
+            if hasArm && hasIntel {
+                return .universal
             }
+            if hasArm {
+                return .arm
+            }
+            if hasIntel {
+                return .intel
+            }
+            return .empty
 
+        case .thin(let cpuType, _):
+            if cpuType == MachOSafety.arm64CPUType {
+                return .arm
+            }
+            if cpuType == MachOSafety.x86_64CPUType {
+                return .intel
+            }
             return .empty
         }
     }
 }
 
 
-// Main function that now directly uses the Mach-O helper
-func thinAppBundleArchitecture(at appBundlePath: URL, of arch: Arch, multi: Bool = false, dryRun: Bool = false, showAlert: Bool = true) -> (Bool, [String: UInt64]?) {
-    // Reset bundle size to 0 before starting (only for real thinning)
+enum BundleThinningOutcome {
+    case succeeded([String: UInt64]?)
+    case partiallySucceeded([String: UInt64]?, String)
+    case blocked(AppBundleMutationEligibility)
+    case failed(String)
+
+    var succeeded: Bool {
+        switch self {
+        case .succeeded, .partiallySucceeded:
+            return true
+        case .blocked, .failed:
+            return false
+        }
+    }
+
+    var sizes: [String: UInt64]? {
+        switch self {
+        case .succeeded(let sizes), .partiallySucceeded(let sizes, _):
+            return sizes
+        case .blocked, .failed:
+            return nil
+        }
+    }
+}
+
+func thinAppBundleArchitectureOutcome(
+    at appBundlePath: URL,
+    of arch: Arch,
+    multi: Bool = false,
+    dryRun: Bool = false,
+    showAlert: Bool = true
+) -> BundleThinningOutcome {
+    _ = arch
+
     if !dryRun {
-        updateOnMain {
-            if let index = AppState.shared.sortedApps.firstIndex(where: { $0.path == appBundlePath }) {
-                var updatedAppInfo = AppState.shared.sortedApps[index]
-                updatedAppInfo.bundleSize = 0
-                AppState.shared.sortedApps[index] = updatedAppInfo
-            }
+        let eligibility = AppBundleMutationSafety.inspect(appBundlePath)
+        guard eligibility.allowsMutation else {
+            return .blocked(eligibility)
         }
-    }
-    
-    // Use privileged helper if installed and needed, otherwise fallback to bundle thinning
-    var success: Bool
-    var sizes: [String: UInt64]?
-    
-    if dryRun {
-        // For dry run, always use direct calculation without helper tools
-        let result = thinAppBundle(at: appBundlePath, dryRun: true)
-        success = result.0
-        sizes = result.1
-    } else if HelperToolManager.shared.isHelperToolInstalled {
-        // Use privileged bundle thinning - helper handles the entire bundle with elevated privileges
-        let semaphore = DispatchSemaphore(value: 0)
-        success = false
-        sizes = nil
-        
-        Task {
-            let result = await HelperToolManager.shared.runBundleThinning(bundlePath: appBundlePath.path)
-            success = result.0
-            if result.0, !result.2.isEmpty {
-                sizes = result.2
-            }
-            semaphore.signal()
-        }
-        semaphore.wait()
-        
-        if !success {
-            // Helper tool failed, fallback to bundle thinning
-            let result = thinAppBundle(at: appBundlePath)
-            success = result.0
-            sizes = result.1
-        }
-    } else {
-        // No helper tool installed, use comprehensive bundle thinning
-        let result = thinAppBundle(at: appBundlePath)
-        success = result.0
-        sizes = result.1
     }
 
-    // Update the app bundle timestamp to refresh Finder (only for real thinning)
-    if success && !dryRun {
+    // Keep real thinning in-process. An installed helper may predate the
+    // validated parser and atomic replacement path, and a lost mutating XPC
+    // reply cannot be retried safely.
+    let result = thinAppBundleDetailed(
+        at: appBundlePath,
+        dryRun: dryRun
+    )
+    let outcome: BundleThinningOutcome
+    switch result.status {
+    case .succeeded:
+        outcome = .succeeded(result.sizes)
+    case .partiallySucceeded:
+        outcome = .partiallySucceeded(result.sizes, result.message)
+    case .blocked(let eligibility):
+        return .blocked(eligibility)
+    case .failed:
+        return .failed(result.message)
+    }
+
+    if !dryRun {
+        let sizes = result.sizes
         if !multi {
-            // Update app sizes after lipo in sortedApps array and the AppInfo active object
-            AppState.shared.getBundleSize(for: AppState.shared.appInfo) { newSize in
-                let newFileSize = totalSizeOnDisk(for: AppState.shared.appInfo.path)
-                updateOnMain {
-                    // Create a new appInfo instance with updated size values
+            let calculatedSize = totalSizeOnDisk(for: appBundlePath)
+            updateOnMain {
+                if AppState.shared.appInfo.path == appBundlePath {
                     var updatedAppInfo = AppState.shared.appInfo
-                    updatedAppInfo.bundleSize = newSize
-                    updatedAppInfo.fileSize[AppState.shared.appInfo.path] = newFileSize
-                    updatedAppInfo.arch = isOSArm() ? .arm : .intel
-                    // Replace the whole appInfo object
-                    AppState.shared.appInfo = updatedAppInfo
-
-                    // Show savings information if we have size data
-                    if showAlert {
-                        if let bundleSizes = sizes,
-                           let preSize = bundleSizes["pre"],
-                           let postSize = bundleSizes["post"] {
-                            let savingsPercentage = Int((Double(preSize - postSize) / Double(preSize)) * 100)
-                            let title = String(format: NSLocalizedString("Space Savings: %d%%", comment: "Lipo result title"), savingsPercentage)
-                            let message = String(format: NSLocalizedString("Bundle thinning complete.\nTotal space saved from all binaries in bundle.", comment: "Lipo result message"))
-                            showCustomAlert(title: title, message: message, style: .informational)
-                        }
+                    updatedAppInfo.bundleSize = calculatedSize
+                    updatedAppInfo.fileSize[appBundlePath] = calculatedSize
+                    if case .succeeded = outcome {
+                        updatedAppInfo.arch = isOSArm() ? .arm : .intel
                     }
+                    AppState.shared.appInfo = updatedAppInfo
+                }
+
+                if case .succeeded = outcome,
+                   showAlert,
+                   let bundleSizes = sizes,
+                   let preSize = bundleSizes["pre"],
+                   let postSize = bundleSizes["post"],
+                   preSize > 0 {
+                    let savedSize = preSize > postSize ? preSize - postSize : 0
+                    let savingsPercentage = Int(
+                        (Double(savedSize) / Double(preSize)) * 100
+                    )
+                    let title = String(
+                        format: NSLocalizedString(
+                            "Space Savings: %d%%",
+                            comment: "Lipo result title"
+                        ),
+                        savingsPercentage
+                    )
+                    let message = NSLocalizedString(
+                        "Bundle thinning complete.\nTotal space saved from all binaries in bundle.",
+                        comment: "Lipo result message"
+                    )
+                    showCustomAlert(
+                        title: title,
+                        message: message,
+                        style: .informational
+                    )
                 }
             }
-        } else { // Update the appInfo in sortedApps array
+        } else {
             let calculatedSize = totalSizeOnDisk(for: appBundlePath)
             DispatchQueue.main.async {
-                // Update the array
-                if let index = AppState.shared.sortedApps.firstIndex(where: { $0.path == appBundlePath }) {
+                if let index = AppState.shared.sortedApps.firstIndex(where: {
+                    $0.path == appBundlePath
+                }) {
                     var updatedAppInfo = AppState.shared.sortedApps[index]
                     updatedAppInfo.bundleSize = calculatedSize
-                    updatedAppInfo.arch = isOSArm() ? .arm : .intel
+                    if case .succeeded = outcome {
+                        updatedAppInfo.arch = isOSArm() ? .arm : .intel
+                    }
                     AppState.shared.sortedApps[index] = updatedAppInfo
                 }
             }
         }
     }
 
-    return (success, sizes)
+    return outcome
+}
+
+func terminateAppForMutation(
+    bundleIdentifier: String,
+    timeoutNanoseconds: UInt64 = 3_000_000_000
+) async -> Bool {
+    let matchingApps = NSWorkspace.shared.runningApplications.filter {
+        $0.bundleIdentifier == bundleIdentifier && !$0.isTerminated
+    }
+    guard !matchingApps.isEmpty else { return true }
+
+    for app in matchingApps where !app.terminate() {
+        return false
+    }
+
+    let pollingInterval: UInt64 = 100_000_000
+    var elapsed: UInt64 = 0
+    while elapsed < timeoutNanoseconds {
+        if matchingApps.allSatisfy(\.isTerminated) {
+            return true
+        }
+        try? await Task.sleep(nanoseconds: pollingInterval)
+        elapsed += pollingInterval
+    }
+    return matchingApps.allSatisfy(\.isTerminated)
+}
+
+// Compatibility wrapper for read-only estimators and existing callers.
+func thinAppBundleArchitecture(
+    at appBundlePath: URL,
+    of arch: Arch,
+    multi: Bool = false,
+    dryRun: Bool = false,
+    showAlert: Bool = true
+) -> (Bool, [String: UInt64]?) {
+    let outcome = thinAppBundleArchitectureOutcome(
+        at: appBundlePath,
+        of: arch,
+        multi: multi,
+        dryRun: dryRun,
+        showAlert: showAlert
+    )
+    return (outcome.succeeded, outcome.sizes)
 }
 
 
@@ -857,8 +1068,9 @@ func formatBytes(_ bytes: Int64) -> String {
 }
 
 // MARK: - Unified Privileged Command Execution
-/// Unified wrapper for executing privileged commands with automatic fallback
-/// Tries helper tool first if installed, falls back to Authorization Services (password prompt)
+/// Executes privileged commands through a preflighted helper when available.
+/// Authorization Services is used only before the real command has been
+/// dispatched, so an ambiguous XPC reply can never trigger a duplicate retry.
 func runSUCommand(
     _ command: String,
     errorContext: String? = nil,
@@ -872,20 +1084,37 @@ func runSUCommand(
         return result
     }
     
-    // Pattern 2: Try helper if installed
+    // Pattern 2: Probe helper transport with a non-mutating command before
+    // dispatching the real operation. Once a mutating command is sent, never
+    // retry it automatically: a lost XPC reply does not prove it did not run.
     if HelperToolManager.shared.isHelperToolInstalled {
-        let result = await HelperToolManager.shared.runCommand(command)
-        if result.0 {
+        let readiness = await HelperToolManager.shared.runCommand("/usr/bin/true")
+        if readiness.0 {
+            let result = await HelperToolManager.shared.runCommand(command)
+            if result.0 {
+                return result
+            }
+
+            if let context = errorContext {
+                printOS("\(context): \(result.1)")
+            }
+            if throwOnFailure {
+                throw NSError(
+                    domain: "SU Command",
+                    code: 1,
+                    userInfo: [NSLocalizedDescriptionKey: result.1]
+                )
+            }
             return result
         }
 
-        // Helper failed, log if errorContext provided
         if let context = errorContext {
-            printOS("\(context): \(result.1)")
+            printOS("\(context): Helper unavailable before dispatch: \(readiness.1)")
         }
     }
 
-    // Pattern 3: Fallback to Authorization Services (prompts for password)
+    // Pattern 3: Use Authorization Services only when no mutation has been
+    // dispatched to the helper.
     let (success, output) = performPrivilegedCommands(commands: command)
 
     // Log custom error if provided and command failed

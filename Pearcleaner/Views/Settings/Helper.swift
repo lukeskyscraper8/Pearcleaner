@@ -3,6 +3,7 @@
 //  Pearcleaner
 //
 //  Created by Alin Lupascu on 3/14/25.
+//  Modified for the independently maintained Pearcleaner fork.
 //
 
 import SwiftUI
@@ -12,10 +13,12 @@ import AlinFoundation
 struct HelperSettingsTab: View {
     @Environment(\.colorScheme) var colorScheme
     @ObservedObject private var helperToolManager = HelperToolManager.shared
+#if DEBUG
     @State private var commandOutput: String = "Command output will display here"
     @State private var commandToRun: String = "whoami"
     @State private var commandToRunManual: String = ""
     @State private var showTestingUI: Bool = false
+#endif
 
     var body: some View {
         VStack(spacing: 20) {
@@ -40,9 +43,11 @@ struct HelperSettingsTab: View {
                                 .frame(width: 20, height: 20)
                                 .padding(.trailing)
                                 .foregroundStyle(ThemeColors.shared(for: colorScheme).primaryText)
+#if DEBUG
                                 .onTapGesture {
                                     showTestingUI.toggle()
                                 }
+#endif
                             Text("Perform privileged operations seamlessly without password prompts")
                                 .font(.callout)
                                 .foregroundStyle(ThemeColors.shared(for: colorScheme).primaryText)
@@ -96,11 +101,13 @@ struct HelperSettingsTab: View {
                 VStack(alignment: .leading, spacing: 20) {
                     Text(message).foregroundStyle(ThemeColors.shared(for: colorScheme).primaryText).font(.body).lineSpacing(5)
 
-                    Text("Since **AuthorizationExecuteWithPrivileges** has been deprecated by Apple as a less secure authentication method, it has been removed from Pearcleaner and the helper tool will be the only option going forward.").font(.footnote).foregroundStyle(ThemeColors.shared(for: colorScheme).secondaryText)
+                    Text("Pearcleaner uses the signed helper for normal privileged operations. The deprecated authorization prompt is retained only as a recovery fallback when the helper cannot be reached.").font(.footnote).foregroundStyle(ThemeColors.shared(for: colorScheme).secondaryText)
                 }
 
             })
 
+#if DEBUG
+            if showTestingUI {
             PearGroupBox(header: {
                 Text("Helper Playground").foregroundStyle(ThemeColors.shared(for: colorScheme).primaryText).font(.title2)
             }, content: {
@@ -172,6 +179,8 @@ struct HelperSettingsTab: View {
             })
             .disabled(!helperToolManager.isHelperToolInstalled)
             .opacity(helperToolManager.isHelperToolInstalled ? 1 : 0.5)
+            }
+#endif
 
 
         }
@@ -179,6 +188,7 @@ struct HelperSettingsTab: View {
             Task {
                 await helperToolManager.manageHelperTool()
             }
+#if DEBUG
             if helperToolManager.isHelperToolInstalled && showTestingUI {
                 Task {
                     let (success, output) = await helperToolManager.runCommand(commandToRun)
@@ -189,6 +199,7 @@ struct HelperSettingsTab: View {
                     }
                 }
             }
+#endif
         }
 
     }

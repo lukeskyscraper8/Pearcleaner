@@ -1,0 +1,57 @@
+name: Verify Release Asset
+
+on:
+  release:
+    types:
+      - published
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing release tag to verify
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: macos-26
+    timeout-minutes: 15
+    env:
+      GH_TOKEN: ${{ github.token }}
+      RELEASE_TAG: ${{ github.event.release.tag_name || inputs.tag }}
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - name: Download published notarized ZIP
+        run: |
+          set -euo pipefail
+          release_json="$(gh api "repos/$GITHUB_REPOSITORY/releases/tags/$RELEASE_TAG")"
+          assets_json="$(printf '%s' "$release_json" | jq '[.assets[] | select((.name | ascii_downcase | startswith("pearcleaner-")) and (.name | ascii_downcase | contains("notarized")) and (.name | ascii_downcase | endswith(".zip")))]')"
+          asset_count="$(printf '%s' "$assets_json" | jq 'length')"
+          if [[ "$asset_count" != "1" ]]; then
+            echo "Expected exactly one notarized Pearcleaner ZIP; found $asset_count." >&2
+            exit 1
+          fi
+
+          asset_id="$(printf '%s' "$assets_json" | jq -r '.[0].id')"
+          asset_digest="$(printf '%s' "$assets_json" | jq -r '.[0].digest // empty')"
+          if [[ -z "$asset_digest" ]]; then
+            echo "Release asset has no GitHub SHA-256 digest." >&2
+            exit 1
+          fi
+
+          gh api \
+            -H 'Accept: application/octet-stream' \
+            "repos/$GITHUB_REPOSITORY/releases/assets/$asset_id" \
+            > Pearcleaner-release.zip
+          printf '%s' "$asset_digest" > Pearcleaner-release.digest
+
+      - name: Verify signature, identity, architectures, and notarization
+        run: >-
+          ./script/verify_release_archive.sh
+          Pearcleaner-release.zip
+          "$RELEASE_TAG"
+          "$(cat Pearcleaner-release.digest)"

@@ -4,6 +4,7 @@
 //
 //  Created by Alin Lupascu on 10/31/23.
 //
+// Modified for the independently maintained Pearcleaner fork.
 
 import AlinFoundation
 import Foundation
@@ -470,43 +471,45 @@ func showAppInFiles(
     }
 }
 
-// Move files to trash using Authorization Services so it asks for user password if needed
+// Move user-writable files to Trash. Protected paths fail closed instead of
+// crossing a privilege boundary with mutable source/destination path strings.
 func moveFilesToTrash(appState: AppState, at fileURLs: [URL]) -> Bool {
+    moveFilesToTrashWithResult(at: fileURLs).allSucceeded
+}
 
+func moveFilesToTrashWithResult(
+    at fileURLs: [URL],
+    isCLI: Bool = false,
+    bundleName: String? = nil
+) -> FileDeletionResult {
     let validFileURLs = filterValidFiles(fileURLs: fileURLs)  // Filter invalid files
 
     // Check if there are any valid files to delete
     guard !validFileURLs.isEmpty else {
         printOS("No valid files to move to Trash.")
-        return false
+        return FileDeletionResult(
+            requestedURLs: fileURLs,
+            movedURLs: [],
+            failedURLs: fileURLs
+        )
     }
 
-    let result = FileManagerUndo.shared.deleteFiles(at: validFileURLs)
-
-    return result
+    return FileManagerUndo.shared.deleteFilesWithResult(
+        at: validFileURLs,
+        isCLI: isCLI,
+        bundleName: bundleName
+    ).includingRequestedURLs(fileURLs)
 }
 
 func moveFilesToTrashCLI(at fileURLs: [URL]) -> Bool {
-
-    let validFileURLs = filterValidFiles(fileURLs: fileURLs)  // Filter invalid files
-
-    // Check if there are any valid files to delete
-    guard !validFileURLs.isEmpty else {
-        printOS("No valid files to move to Trash.")
-        return false
-    }
-
-    let result = FileManagerUndo.shared.deleteFiles(at: validFileURLs, isCLI: true)
-
-    return result
+    moveFilesToTrashWithResult(at: fileURLs, isCLI: true).allSucceeded
 }
 
 func filterValidFiles(fileURLs: [URL]) -> [URL] {
-    let fileManager = FileManager.default
     return fileURLs.filter { url in
 
         // Check if file or folder exists
-        guard fileManager.fileExists(atPath: url.path) else {
+        guard pathExistsWithoutFollowingSymlinks(url) else {
             printOS("Skipping \(url.path): File or folder does not exist.")
             return false
         }
@@ -549,9 +552,11 @@ func removeImmutableAttribute(from url: URL) throws {
 func undoTrash() -> Bool {
     // Check if an undo action is available
     if FileManagerUndo.shared.undoManager.canUndo {
-        FileManagerUndo.shared.undoManager.undo()
-        playTrashSound(undo: true)
-        return true
+        let restored = FileManagerUndo.shared.undoLastDeletion()
+        if restored {
+            playTrashSound(undo: true)
+        }
+        return restored
     } else {
         printOS("Undo Trash Error: No undo action available.")
         return false
@@ -597,9 +602,9 @@ func handleLaunchMode() {
     let termType = ProcessInfo.processInfo.environment["TERM"]
     let isRunningInTerminal = termType != nil && termType != "dumb"
 
-    // Check if any CLI command arguments are present (even if not in terminal)
-    // This handles cases like SUDO_ASKPASS where the app is launched without a terminal
-    let cliCommands = ["uninstall", "list", "search", "help", "ask-password"]
+    // Check if any CLI command arguments are present even when Terminal does
+    // not provide an interactive TERM environment.
+    let cliCommands = ["uninstall", "list", "search", "help"]
     let hasCLICommand = arguments.dropFirst().contains { arg in
         cliCommands.contains(arg) || arg.hasPrefix("--")
     }
@@ -632,6 +637,41 @@ struct LanguageInfo: Identifiable, Hashable {
     let isPreferred: Bool           // Is in user's macOS preferred languages
     let fileCount: Int              // Number of files in .lproj folder
     let lprojPaths: [URL]           // All .lproj folder paths for this language
+}
+
+struct LanguagePruneResult {
+    let requestedLanguageCount: Int
+    let removedLanguageCount: Int
+    let movedPathCount: Int
+    let failedPathCount: Int
+
+    var allSucceeded: Bool {
+        requestedLanguageCount > 0 &&
+        removedLanguageCount == requestedLanguageCount &&
+        failedPathCount == 0
+    }
+}
+
+func translationPruneTargetsAreUserWritable(
+    _ targetURLs: [URL],
+    in appBundleURL: URL,
+    isWritable: (URL) -> Bool = {
+        FileManager.default.isWritableFile(atPath: $0.path)
+    }
+) -> Bool {
+    guard !targetURLs.isEmpty else { return false }
+
+    let rootURL = appBundleURL.resolvingSymlinksInPath().standardizedFileURL
+    guard isWritable(rootURL) else { return false }
+
+    return targetURLs.allSatisfy { targetURL in
+        let target = targetURL.resolvingSymlinksInPath().standardizedFileURL
+        let parent = target.deletingLastPathComponent()
+        return AppBundleMutationSafety.contains(target, in: rootURL)
+            && AppBundleMutationSafety.contains(parent, in: rootURL)
+            && isWritable(target)
+            && isWritable(parent)
+    }
 }
 
 /// Find all available language translations in an app bundle
@@ -722,31 +762,109 @@ func findAvailableLanguages(in appBundlePath: String) async -> [LanguageInfo] {
     }
 }
 
-/// Remove translation files manually based on user selection
-/// - Parameter languagesToRemove: Array of LanguageInfo objects to remove
-func pruneLanguagesManual(languagesToRemove: [LanguageInfo]) async throws {
-    guard !languagesToRemove.isEmpty else { return }
+/// Remove translation files manually based on user selection.
+func pruneLanguagesManual(
+    languagesToRemove: [LanguageInfo],
+    in appBundleURL: URL
+) async throws -> LanguagePruneResult {
+    guard !languagesToRemove.isEmpty else {
+        return LanguagePruneResult(
+            requestedLanguageCount: 0,
+            removedLanguageCount: 0,
+            movedPathCount: 0,
+            failedPathCount: 0
+        )
+    }
 
     // Flatten all lproj paths from all languages
     let lprojsToRemove = languagesToRemove.flatMap { $0.lprojPaths }
+    guard !lprojsToRemove.isEmpty else {
+        return LanguagePruneResult(
+            requestedLanguageCount: languagesToRemove.count,
+            removedLanguageCount: 0,
+            movedPathCount: 0,
+            failedPathCount: 0
+        )
+    }
 
-    // Get app name from AppState (always available since pruning is from selected app)
-    let appName = AppState.shared.appInfo.appName
+    for lprojURL in lprojsToRemove {
+        guard lprojURL.pathExtension.lowercased() == "lproj",
+              AppBundleMutationSafety.contains(lprojURL, in: appBundleURL),
+              let values = try? lprojURL.resourceValues(
+                forKeys: [.isDirectoryKey, .isSymbolicLinkKey]
+              ),
+              values.isDirectory == true,
+              values.isSymbolicLink != true else {
+            throw NSError(
+                domain: "com.pearcleaner.prune",
+                code: 2,
+                userInfo: [
+                    NSLocalizedDescriptionKey:
+                        "A translation path could not be validated inside the selected app."
+                ]
+            )
+        }
+    }
 
-    // Use FileManagerUndo which automatically handles:
-    // - Protected/system-owned files via privileged helper
-    // - Bundled trash organization
-    // - Undo support
+    // This check is intentionally immediately before deletion. Removing
+    // resources from either the outer app or signed nested code invalidates
+    // its signature.
+    try AppBundleMutationSafety.requireUnsignedMutationTargets(
+        lprojsToRemove,
+        in: appBundleURL,
+        inspectTargetsAsCode: false
+    )
+
+    // Translation pruning intentionally has no privileged fallback. Requiring
+    // the app, each target and each target's parent to be writable keeps the
+    // operation within the user's own unsigned app bundles.
+    guard translationPruneTargetsAreUserWritable(
+        lprojsToRemove,
+        in: appBundleURL
+    ) else {
+        throw NSError(
+            domain: "com.pearcleaner.prune",
+            code: 4,
+            userInfo: [
+                NSLocalizedDescriptionKey:
+                    "Translation pruning is limited to user-writable app bundles. No files were modified."
+            ]
+        )
+    }
+
+    let appName = appBundleURL.deletingPathExtension().lastPathComponent
+
+    // Use FileManagerUndo for bundled Trash organization and Undo support.
     let bundleName = "\(appName) - Translations"
-    let success = FileManagerUndo.shared.deleteFiles(at: lprojsToRemove, bundleName: bundleName)
+    let deletionResult = FileManagerUndo.shared.deleteFilesWithResult(
+        at: lprojsToRemove,
+        bundleName: bundleName
+    )
 
-    if !success {
+    if deletionResult.movedURLs.isEmpty {
         throw NSError(
             domain: "com.pearcleaner.prune",
             code: 1,
             userInfo: [NSLocalizedDescriptionKey: "Failed to remove translation files."]
         )
     }
+
+    let movedPaths = Set(
+        deletionResult.movedURLs.map { $0.standardizedFileURL.path }
+    )
+    let removedLanguageCount = languagesToRemove.filter { language in
+        !language.lprojPaths.isEmpty &&
+        language.lprojPaths.allSatisfy {
+            movedPaths.contains($0.standardizedFileURL.path)
+        }
+    }.count
+
+    return LanguagePruneResult(
+        requestedLanguageCount: languagesToRemove.count,
+        removedLanguageCount: removedLanguageCount,
+        movedPathCount: deletionResult.movedURLs.count,
+        failedPathCount: deletionResult.failedURLs.count
+    )
 }
 
 // Remove translations that are not in use (AUTO mode - keeps user's macOS preferred languages)
@@ -754,6 +872,8 @@ func pruneLanguagesManual(languagesToRemove: [LanguageInfo]) async throws {
 ///   - appBundlePath: Path to .app bundle
 ///   - showAlert: Whether to show success alert (default: false for silent background operation)
 func pruneLanguages(in appBundlePath: String, showAlert: Bool = false) async throws {
+    let appBundleURL = URL(fileURLWithPath: appBundlePath).standardizedFileURL
+
     // Use helper to get all languages with URLs and preferred status
     let allLanguages = await findAvailableLanguages(in: appBundlePath)
     guard !allLanguages.isEmpty else { return }
@@ -776,12 +896,28 @@ func pruneLanguages(in appBundlePath: String, showAlert: Bool = false) async thr
         }
     }
 
+    guard !languagesToRemove.isEmpty else { return }
+
     // Delegate to manual prune (reuses same deletion logic)
-    try await pruneLanguagesManual(languagesToRemove: languagesToRemove)
+    let result = try await pruneLanguagesManual(
+        languagesToRemove: languagesToRemove,
+        in: appBundleURL
+    )
+
+    guard result.allSucceeded else {
+        throw NSError(
+            domain: "com.pearcleaner.prune",
+            code: 3,
+            userInfo: [
+                NSLocalizedDescriptionKey:
+                    "Removed \(result.removedLanguageCount) of \(result.requestedLanguageCount) languages; \(result.failedPathCount) translation folder(s) could not be removed."
+            ]
+        )
+    }
 
     // Show success alert if requested (for UI-triggered pruning)
     if showAlert {
-        let removedCount = languagesToRemove.count
+        let removedCount = result.removedLanguageCount
         let keptCount = allLanguages.count - removedCount
         await MainActor.run {
             showCustomAlert(

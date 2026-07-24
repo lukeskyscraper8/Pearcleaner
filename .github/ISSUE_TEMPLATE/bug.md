@@ -7,48 +7,70 @@ assignees: ''
 ---
 
 <!--
-WARNING: Issues with the template below removed will be closed!
+Issues with the template below removed or left incomplete will be closed.
 -->
 
 <!--
-Thanks for helping make Pearcleaner better! Before you submit your issue, please make sure you follow the list below and check the appropriate boxes by putting an x inside the [ ]: [x] 
+Thanks for helping make this maintained fork better. Check each applicable box
+by putting an x inside the brackets: [x]
 -->
 
 ### New Issue Checklist
 
-- [ ] I updated Pearcleaner to the latest version and still observe the issue
-- [ ] I searched for [existing GitHub issues](https://github.com/alienator88/pearcleaner/issues)
-- [ ] OS Version: [e.g. 13.0]
-- [ ] Pearcleaner Version: [e.g. 3.x.x]
+- [ ] I checked the README release warning and reproduced on the newest build I can safely use
+- [ ] I searched this fork's [existing GitHub issues](https://github.com/lukeskyscraper8/Pearcleaner/issues)
+- [ ] This report does not contain vulnerability details; security reports follow [`SECURITY.md`](https://github.com/lukeskyscraper8/Pearcleaner/blob/main/SECURITY.md)
+- [ ] macOS version: [e.g. 15.5]
+- [ ] Pearcleaner version and build: [from Pearcleaner → About]
+- [ ] Installation source: [this fork's GitHub release / local source build / other]
 
 ---
 
-### Issue:
+### Issue
+
 <!-- A clear and concise description of what the bug is -->
 
-#### Steps:
+#### Steps
+
 <!-- Provide step by step directions on how the issue is reproduced -->
 
-#### Screenshots:
+#### Expected result
+
+<!-- What should have happened? -->
+
+#### Actual result
+
+<!-- What happened instead? -->
+
+#### Screenshots
+
 <!-- If applicable, add screenshots to show the bug -->
 
+> [!CAUTION]
+> Logs can contain usernames, home-directory paths, application names, and file names. Review and redact personal or sensitive information before posting.
 
 <!-- If your issue has logging that might help, you can grab them via the steps below -->
 
 <!-- 
-1. While Pearcleaner is running, push `CMD+D` to open the debug console and show captured logs
-2. If relevant logs are seen in the console, copy them below 
+1. While Pearcleaner is running, press `CMD+D` to open the debug console.
+2. If relevant logs are present, redact them and copy the necessary excerpt below.
 -->
-#### Debug Console
-<pre> [REPLACE THIS TEXT BETWEEN THE PRE TAGS WITH YOUR LOGS] </pre>
+#### Debug Console Logs
+
+```text
+REPLACE WITH A SHORT, REDACTED LOG EXCERPT
+```
 
 ---
 
 <!-- 
- 1. Open the Terminal app and run the following command: 
-    log stream --level debug --style compact --predicate 'subsystem == "com.alienator88.Pearcleaner"'
- 2. Launch Pearcleaner to reproduce the startup issue
- 3. Copy the logs below from Terminal
-  -->
-  #### Console Logs
-<pre> [REPLACE THIS TEXT BETWEEN THE PRE TAGS WITH YOUR LOGS] </pre>
+1. Open Terminal and run:
+   log stream --level debug --style compact --predicate 'subsystem == "com.lukerow.Pearcleaner"'
+2. Launch Pearcleaner and reproduce the issue.
+3. Stop the stream, redact the relevant excerpt, and paste it below.
+-->
+#### macOS Unified Logs
+
+```text
+REPLACE WITH A SHORT, REDACTED LOG EXCERPT
+```

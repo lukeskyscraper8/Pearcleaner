@@ -316,13 +316,30 @@ struct EnvironmentCleanerView: View {
                                     GlobalConsoleManager.shared.appendOutput("Starting deletion of \(selectedPaths.count) development folder(s)...\n", source: CurrentPage.development.title)
                                     let urls = selectedPaths.map { URL(fileURLWithPath: NSString(string: $0).expandingTildeInPath) }
                                     let bundleName = "Development - Folders (\(selectedPaths.count))"
-                                    let _ = FileManagerUndo.shared.deleteFiles(at: urls, bundleName: bundleName)
-                                    GlobalConsoleManager.shared.appendOutput("✓ Completed deletion of \(selectedPaths.count) folder(s)\n", source: CurrentPage.development.title)
-                                    selectedPaths.removeAll()
-                                    refreshPaths()
-                                    if let env = appState.selectedEnvironment,
-                                       paths.first(where: { $0.name == env.name })?.paths.isEmpty ?? true {
-                                        appState.selectedEnvironment = nil
+                                    let result = FileManagerUndo.shared.deleteFilesWithResult(
+                                        at: urls,
+                                        bundleName: bundleName
+                                    )
+                                    if result.allSucceeded {
+                                        GlobalConsoleManager.shared.appendOutput("✓ Completed deletion of \(result.movedURLs.count) folder(s)\n", source: CurrentPage.development.title)
+                                    } else {
+                                        let message = result.protectedURLs.isEmpty
+                                            ? "Moved \(result.movedURLs.count) of \(result.requestedURLs.count) folder(s) to Trash."
+                                            : "Protected development folders were skipped. Pearcleaner does not move protected paths through its privileged helper."
+                                        GlobalConsoleManager.shared.appendOutput("⚠ \(message)\n", source: CurrentPage.development.title)
+                                        showCustomAlert(
+                                            title: result.isPartial ? "Deletion Partially Completed" : "Deletion Failed",
+                                            message: message,
+                                            style: .warning
+                                        )
+                                    }
+                                    if !result.movedURLs.isEmpty {
+                                        selectedPaths.removeAll()
+                                        refreshPaths()
+                                        if let env = appState.selectedEnvironment,
+                                           paths.first(where: { $0.name == env.name })?.paths.isEmpty ?? true {
+                                            appState.selectedEnvironment = nil
+                                        }
                                     }
                                 })
                             }
@@ -351,14 +368,31 @@ struct EnvironmentCleanerView: View {
                                     }
                                     if !allContentURLs.isEmpty {
                                         let bundleName = "Development - Contents (\(selectedPaths.count))"
-                                        let _ = FileManagerUndo.shared.deleteFiles(at: allContentURLs, bundleName: bundleName)
-                                        GlobalConsoleManager.shared.appendOutput("✓ Completed deletion of contents\n", source: CurrentPage.development.title)
-                                    }
-                                    selectedPaths.removeAll()
-                                    refreshPaths()
-                                    if let env = appState.selectedEnvironment,
-                                       paths.first(where: { $0.name == env.name })?.paths.isEmpty ?? true {
-                                        appState.selectedEnvironment = nil
+                                        let result = FileManagerUndo.shared.deleteFilesWithResult(
+                                            at: allContentURLs,
+                                            bundleName: bundleName
+                                        )
+                                        if result.allSucceeded {
+                                            GlobalConsoleManager.shared.appendOutput("✓ Completed deletion of contents\n", source: CurrentPage.development.title)
+                                        } else {
+                                            let message = result.protectedURLs.isEmpty
+                                                ? "Moved \(result.movedURLs.count) of \(result.requestedURLs.count) item(s) to Trash."
+                                                : "Protected development content was skipped. Pearcleaner does not move protected paths through its privileged helper."
+                                            GlobalConsoleManager.shared.appendOutput("⚠ \(message)\n", source: CurrentPage.development.title)
+                                            showCustomAlert(
+                                                title: result.isPartial ? "Deletion Partially Completed" : "Deletion Failed",
+                                                message: message,
+                                                style: .warning
+                                            )
+                                        }
+                                        if !result.movedURLs.isEmpty {
+                                            selectedPaths.removeAll()
+                                            refreshPaths()
+                                            if let env = appState.selectedEnvironment,
+                                               paths.first(where: { $0.name == env.name })?.paths.isEmpty ?? true {
+                                                appState.selectedEnvironment = nil
+                                            }
+                                        }
                                     }
                                 })
                             }
@@ -651,7 +685,20 @@ struct PathRowView: View {
             if !contentURLs.isEmpty {
                 let folderName = (matchedPath as NSString).lastPathComponent
                 let bundleName = "Development - \(folderName) Contents"
-                let _ = FileManagerUndo.shared.deleteFiles(at: contentURLs, bundleName: bundleName)
+                let result = FileManagerUndo.shared.deleteFilesWithResult(
+                    at: contentURLs,
+                    bundleName: bundleName
+                )
+                if !result.allSucceeded {
+                    let message = result.protectedURLs.isEmpty
+                        ? "Moved \(result.movedURLs.count) of \(result.requestedURLs.count) item(s) to Trash."
+                        : "Protected development content was skipped. Pearcleaner does not move protected paths through its privileged helper."
+                    showCustomAlert(
+                        title: result.isPartial ? "Deletion Partially Completed" : "Deletion Failed",
+                        message: message,
+                        style: .warning
+                    )
+                }
             }
             checkPath(path) // Recheck the state after deletion
         } catch {

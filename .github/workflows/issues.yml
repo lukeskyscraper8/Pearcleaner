@@ -1,4 +1,5 @@
 name: Close empty issues and templates
+
 on:
   issues:
     types:
@@ -6,19 +7,25 @@ on:
       - opened
       - edited
 
+permissions:
+  contents: read
+  issues: write
+
 jobs:
   closeEmptyIssuesAndTemplates:
     name: Close empty issues and templates
     runs-on: ubuntu-latest
     steps:
-    - uses: actions/checkout@v7 # NOTE: Retrieve issue templates.
-    - name: Run empty issues closer action
-      uses: rickstaa/empty-issues-closer-action@v1
-      env:
-        github_token: ${{ secrets.GITHUB_TOKEN }}
-      with:
-        close_comment: Closing this issue because it appears to be empty. Please update the issue for it to be reopened.
-        open_comment: Reopening this issue because the author provided more information.
-        check_templates: true
-        template_close_comment: Closing this issue since the issue template was not filled in. Please provide us with more information to have this issue reopened.
-        template_open_comment: Reopening this issue because the author provided more information.
+      - name: Check out issue templates
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - name: Run empty issues closer action
+        uses: rickstaa/empty-issues-closer-action@e96914613221511279ca25f50fd4acc85e331d99 # v1.1.74
+        env:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          close_comment: Closing this issue because it appears to be empty. Please update the issue for it to be reopened.
+          open_comment: Reopening this issue because the author provided more information.
+          check_templates: true
+          template_close_comment: Closing this issue because the selected issue template was not completed. Please add the requested information for it to be reopened.
+          template_open_comment: Reopening this issue because the author provided more information.

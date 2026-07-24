@@ -4,6 +4,7 @@
 //
 //  Created by Alin Lupascu on 10/31/23.
 //
+//  Modified for the independently maintained Pearcleaner fork.
 
 import SwiftUI
 import AppKit
@@ -25,8 +26,8 @@ struct PearcleanerApp: App {
         //MARK: GUI or CLI launch mode.
         handleLaunchMode()
 
-        // Remove credentials cached by older versions. Password caching is no
-        // longer supported by the SUDO_ASKPASS flow.
+        // Remove credentials cached by older versions. Pearcleaner no longer
+        // collects or stores a sudo password.
         removeLegacySudoPasswordCache()
 
         //MARK: Pre-load apps data during app initialization (use streaming for fast initial load)
@@ -84,8 +85,6 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         }
 
         ensureApplicationSupportFolderExists()
-
-        cleanupPearcleanerTempDirs()
 
     }
 

@@ -2,27 +2,104 @@ name: Build
 
 on:
   push:
+    branches:
+      - main
   pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   build:
     runs-on: macos-26
+    timeout-minutes: 45
+    env:
+      CI_DERIVED_DATA: .build/CI-DerivedData
+      CI_SOURCE_PACKAGES: .build/CI-DerivedData/SourcePackages
     steps:
-      - uses: actions/checkout@v7
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
       - name: Resolve package dependencies
-        run: xcodebuild -resolvePackageDependencies -project Pearcleaner.xcodeproj
+        run: >-
+          xcodebuild
+          -resolvePackageDependencies
+          -project Pearcleaner.xcodeproj
+          -scheme "Pearcleaner Debug"
+          -clonedSourcePackagesDirPath "$CI_SOURCE_PACKAGES"
 
-      - name: Build
+      - name: Build Debug
         run: >-
           xcodebuild -quiet
           -project Pearcleaner.xcodeproj
           -scheme "Pearcleaner Debug"
           -configuration Debug
           -destination 'generic/platform=macOS'
-          -derivedDataPath .build/CI-DerivedData
+          -derivedDataPath "$CI_DERIVED_DATA"
+          -clonedSourcePackagesDirPath "$CI_SOURCE_PACKAGES"
+          -disableAutomaticPackageResolution
           CODE_SIGNING_ALLOWED=NO
           build
 
+      - name: Test
+        run: >-
+          xcodebuild -quiet
+          -project Pearcleaner.xcodeproj
+          -scheme "Pearcleaner Debug"
+          -configuration Debug
+          -destination 'platform=macOS'
+          -derivedDataPath "$CI_DERIVED_DATA"
+          -clonedSourcePackagesDirPath "$CI_SOURCE_PACKAGES"
+          -disableAutomaticPackageResolution
+          CODE_SIGNING_ALLOWED=NO
+          test
+
       - name: Security regression checks
-        run: ./script/security_regression_checks.sh .build/CI-DerivedData/Build/Products/Debug/Pearcleaner.app
+        run: ./script/security_regression_checks.sh "$CI_DERIVED_DATA/Build/Products/Debug/Pearcleaner.app"
+
+      - name: Analyze Debug
+        run: >-
+          xcodebuild -quiet
+          -project Pearcleaner.xcodeproj
+          -scheme "Pearcleaner Debug"
+          -configuration Debug
+          -destination 'generic/platform=macOS'
+          -derivedDataPath "$CI_DERIVED_DATA"
+          -clonedSourcePackagesDirPath "$CI_SOURCE_PACKAGES"
+          -disableAutomaticPackageResolution
+          CODE_SIGNING_ALLOWED=NO
+          analyze
+
+      - name: Build Release (arm64)
+        run: >-
+          xcodebuild -quiet
+          -project Pearcleaner.xcodeproj
+          -scheme "Pearcleaner Release"
+          -configuration Release
+          -destination 'generic/platform=macOS'
+          -derivedDataPath "$CI_DERIVED_DATA"
+          -clonedSourcePackagesDirPath "$CI_SOURCE_PACKAGES"
+          -disableAutomaticPackageResolution
+          CODE_SIGNING_ALLOWED=NO
+          ONLY_ACTIVE_ARCH=NO
+          ARCHS=arm64
+          build
+
+      - name: Build Release (x86_64)
+        run: >-
+          xcodebuild -quiet
+          -project Pearcleaner.xcodeproj
+          -scheme "Pearcleaner Release"
+          -configuration Release
+          -destination 'generic/platform=macOS'
+          -derivedDataPath "$CI_DERIVED_DATA"
+          -clonedSourcePackagesDirPath "$CI_SOURCE_PACKAGES"
+          -disableAutomaticPackageResolution
+          CODE_SIGNING_ALLOWED=NO
+          ONLY_ACTIVE_ARCH=NO
+          ARCHS=x86_64
+          build

@@ -3,8 +3,10 @@
 //  Pearcleaner
 //
 //  Created by Alin Lupascu on 3/14/25.
+//  Modified for the independently maintained Pearcleaner fork.
 //
 
+import Foundation
 import ServiceManagement
 import AlinFoundation
 
@@ -229,7 +231,6 @@ class HelperToolManager: ObservableObject {
             }
         }
     }
-
 
     // Create/reuse XPC connection
     private func getConnection() -> NSXPCConnection? {
