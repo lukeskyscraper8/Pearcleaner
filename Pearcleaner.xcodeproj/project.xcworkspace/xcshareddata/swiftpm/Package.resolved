@@ -6,7 +6,6 @@
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/alienator88/AlinFoundation",
       "state" : {
-        "branch" : "main",
         "revision" : "f61241c2ea1856ef41cbfc965afe9d756121456f"
       }
     },

@@ -7,12 +7,13 @@
 //  Based on Sparkle Framework's version comparison algorithm
 //  License: MIT
 //
+//  Modified for the independently maintained Pearcleaner fork.
 
 import Foundation
 
 /// A version struct that supports arbitrary-length version numbers (2, 3, 4+ components)
 /// Designed specifically for Sparkle update feeds which use wildly inconsistent formats
-struct Version: Hashable, Comparable {
+struct Version: Comparable {
 
     /// The user-facing version number (e.g., "1.2025.288.13", "1.0.0-beta")
     let versionNumber: String?
@@ -43,15 +44,6 @@ struct Version: Hashable, Comparable {
         compare(lhs, rhs) == .newer
     }
 
-
-    // MARK: - Hashing
-
-    func hash(into hasher: inout Hasher) {
-        hasher.combine(versionNumber)
-        hasher.combine(buildNumber)
-    }
-
-
     // MARK: - Private
 
     /// An enum describing the result of a comparison
@@ -62,23 +54,47 @@ struct Version: Hashable, Comparable {
     /// Performs the actual version comparison
     /// This algorithm is adopted from Sparkle Framework and slightly adapted
     private static func compare(_ lhs: Version, _ rhs: Version) -> CheckingResult {
-        var v1: String?
-        var v2: String?
-
-        // Only allow build number checks if build and version number actually differ
-        let allowBuildNumberCheck = lhs.buildNumber != lhs.versionNumber
-        if allowBuildNumberCheck, let b1 = lhs.buildNumber, let b2 = rhs.buildNumber {
-            v1 = b1
-            v2 = b2
-        } else {
-            v1 = lhs.versionNumber
-            v2 = rhs.versionNumber
+        func compareValues(_ value1: String?, _ value2: String?) -> CheckingResult {
+            switch (value1, value2) {
+            case (nil, nil):
+                return .equal
+            case (nil, _):
+                return .older
+            case (_, nil):
+                return .newer
+            case (.some(let value1), .some(let value2)):
+                return compareComponents(value1.components(), value2.components())
+            }
         }
 
-        guard let c1 = v1?.components(), let c2 = v2?.components() else {
-            return .undefined
+        // Use the display version as the stable primary key and the build as
+        // a tie-breaker. This is symmetric, keeps mixed/missing build metadata
+        // from comparing a build on one side with a version on the other, and
+        // gives Comparable a transitive lexicographic ordering.
+        let primaryResult = compareValues(
+            lhs.versionNumber ?? lhs.buildNumber,
+            rhs.versionNumber ?? rhs.buildNumber
+        )
+        guard case .equal = primaryResult else {
+            return primaryResult
         }
 
+        switch (lhs.buildNumber, rhs.buildNumber) {
+        case (nil, nil):
+            return .equal
+        case (nil, .some):
+            return .older
+        case (.some, nil):
+            return .newer
+        case (.some(let lhsBuild), .some(let rhsBuild)):
+            return compareValues(lhsBuild, rhsBuild)
+        }
+    }
+
+    private static func compareComponents(
+        _ c1: [Segment],
+        _ c2: [Segment]
+    ) -> CheckingResult {
         let count1 = c1.count
         let count2 = c2.count
         for i in 0..<min(count1, count2) {
@@ -128,26 +144,52 @@ struct Version: Hashable, Comparable {
                     return .newer // Think "1.2.3" vs "1.2.."
                 }
             }
+
+            if atomsCount1 != atomsCount2 {
+                let lhsIsLonger = atomsCount1 > atomsCount2
+                let longerAtoms = (lhsIsLonger ? component1 : component2)
+                    .dropFirst(lhsIsLonger ? atomsCount2 : atomsCount1)
+
+                for atom in longerAtoms {
+                    switch atom {
+                    case .number(let number) where number != 0:
+                        return lhsIsLonger ? .newer : .older
+                    case .string:
+                        return lhsIsLonger ? .older : .newer
+                    default:
+                        continue
+                    }
+                }
+            }
         }
 
         // The versions are equal up to the point where they both still have parts
         // Let's check to see if one is larger than the other
         if count1 != count2 {
-            let l = count1 > count2
-            let longerComponents = (l ? c1 : c2)[(l ? count2 : count1)...]
-            guard case .component(let atoms) = longerComponents.first(where: { if case .component(_) = $0 { true } else { false } }) else {
-                return .equal // Think "1.2" vs "1.2."
-            }
+            let lhsIsLonger = count1 > count2
+            let longerComponents = (lhsIsLonger ? c1 : c2)[(lhsIsLonger ? count2 : count1)...]
 
-            if case .number(let number) = atoms.first {
-                if number == 0 {
-                    return .equal // Think "1.2" vs "1.2.0"
+            // A zero component is insignificant only when every remaining
+            // component is also zero. For example, 1.2 == 1.2.0, but
+            // 1.2.0.1 must still compare newer than 1.2.
+            for segment in longerComponents {
+                guard case .component(let atoms) = segment else { continue }
+
+                for atom in atoms {
+                    switch atom {
+                    case .number(let number) where number != 0:
+                        return lhsIsLonger ? .newer : .older
+                    case .string:
+                        // A trailing qualifier is a pre-release marker:
+                        // 1.2-beta is older than 1.2.
+                        return lhsIsLonger ? .older : .newer
+                    default:
+                        continue
+                    }
                 }
-
-                return l ? .newer : .older // Think "1.2" vs "1.2.2"
             }
 
-            return l ? .older : .newer // Think "1.2" vs "1.2A"
+            return .equal // Think "1.2" vs "1.2.0.0"
         }
 
         return .equal // Think "1.2" vs "1.2"

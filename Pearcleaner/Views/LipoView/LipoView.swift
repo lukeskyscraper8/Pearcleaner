@@ -3,6 +3,7 @@
 //  Pearcleaner
 //
 //  Created by Alin Lupascu on 3/20/25.
+//  Modified for the independently maintained Pearcleaner fork.
 //
 
 import AlinFoundation
@@ -218,6 +219,7 @@ struct LipoView: View {
                                     )
                                 }
                             }
+                            .allowsHitTesting(!isProcessing)
                         }
                         .scrollIndicators(scrollIndicators ? .automatic : .never)
                     }
@@ -288,6 +290,7 @@ struct LipoView: View {
                             ))
                         }
                         .controlGroup(Capsule(style: .continuous), level: .primary)
+                        .disabled(isProcessing)
 
                         Spacer()
                     }
@@ -326,7 +329,7 @@ struct LipoView: View {
                     Divider()
                     Spacer()
                     Text(
-                        "Bundle thinning (lipo) is an aggressive operation that modifies the binaries within app bundles by removing unused architectures. While generally safe, some applications may experience issues or fail to launch after this process. It is strongly recommended to create a backup of your applications before proceeding, especially for critical or frequently used apps."
+                        "Bundle thinning (lipo) modifies binaries by removing unused architectures. Pearcleaner skips signed apps and any app whose signing state cannot be inspected safely. Unsigned apps can still fail to launch after modification, so keep a backup before proceeding."
                     )
                     .font(.subheadline)
                     Spacer()
@@ -440,69 +443,179 @@ struct LipoView: View {
     }
 
     private func startLipo() {
-        GlobalConsoleManager.shared.appendOutput("Starting lipo operation on \(selectedApps.count) app(s)...\n", source: CurrentPage.lipo.title)
+        guard !isProcessing, !selectedApps.isEmpty else { return }
+        let selectedPaths = selectedApps
+        let selectedAppSnapshots = appState.sortedApps.filter {
+            selectedPaths.contains($0.path.path) && $0.arch == .universal
+        }
+        let unresolvedSelectionCount = max(
+            0,
+            selectedPaths.count - selectedAppSnapshots.count
+        )
+
+        GlobalConsoleManager.shared.appendOutput(
+            "Starting lipo operation on \(selectedPaths.count) app(s)...\n",
+            source: CurrentPage.lipo.title
+        )
         isProcessing = true
         Task {
             var totalPreSize: UInt64 = 0
             var totalPostSize: UInt64 = 0
+            var processedAppPaths: [String] = []
+            var blockedApps: [String] = []
+            var failedApps: [String] = []
+            var partiallyProcessedApps: [String] = []
+            var pruneFailures: [String] = []
 
-            for app in universalApps where selectedApps.contains(app.path.path) {
-                // Kill app if running before lipo'ing to prevent corruption
-                await killApp(appId: app.bundleIdentifier)
-
-                // Use the updated thinAppBundleArchitecture function with multi=true
-                let (success, sizes) = thinAppBundleArchitecture(
-                    at: app.path, of: app.arch, multi: true)
-                if success, let sizes = sizes {
-                    totalPreSize += sizes["pre"] ?? 0
-                    totalPostSize += sizes["post"] ?? 0
+            for app in selectedAppSnapshots {
+                let eligibility = AppBundleMutationSafety.inspect(app.path)
+                guard eligibility.allowsMutation else {
+                    blockedApps.append(app.appName)
+                    GlobalConsoleManager.shared.appendOutput(
+                        "⚠ Skipped \(app.appName): \(eligibility.userFacingReason)\n",
+                        source: CurrentPage.lipo.title
+                    )
+                    continue
                 }
 
-                // Prune languages if enabled
-                if prune {
+                guard await terminateAppForMutation(
+                    bundleIdentifier: app.bundleIdentifier
+                ) else {
+                    failedApps.append(app.appName)
+                    GlobalConsoleManager.shared.appendOutput(
+                        "✗ \(app.appName) did not terminate; no files were modified.\n",
+                        source: CurrentPage.lipo.title
+                    )
+                    continue
+                }
+
+                let outcome = thinAppBundleArchitectureOutcome(
+                    at: app.path,
+                    of: app.arch,
+                    multi: true
+                )
+                switch outcome {
+                case .succeeded(let sizes):
+                    processedAppPaths.append(app.path.path)
+                    if let sizes {
+                        totalPreSize += sizes["pre"] ?? 0
+                        totalPostSize += sizes["post"] ?? 0
+                    }
+
+                    // Translation pruning is coupled to a successful thinning
+                    // result so blocked or failed apps are never pruned.
+                    guard prune else { continue }
                     do {
                         try await pruneLanguages(in: app.path.path)
                     } catch {
+                        pruneFailures.append(app.appName)
                         printOS("Translation prune error: \(error)")
                     }
+
+                case .partiallySucceeded(let sizes, let message):
+                    processedAppPaths.append(app.path.path)
+                    partiallyProcessedApps.append(app.appName)
+                    if let sizes {
+                        totalPreSize += sizes["pre"] ?? 0
+                        totalPostSize += sizes["post"] ?? 0
+                    }
+                    GlobalConsoleManager.shared.appendOutput(
+                        "⚠ Partially thinned \(app.appName): \(message)\n",
+                        source: CurrentPage.lipo.title
+                    )
+
+                case .blocked(let eligibility):
+                    blockedApps.append(app.appName)
+                    GlobalConsoleManager.shared.appendOutput(
+                        "⚠ Skipped \(app.appName): \(eligibility.userFacingReason)\n",
+                        source: CurrentPage.lipo.title
+                    )
+
+                case .failed(let message):
+                    failedApps.append(app.appName)
+                    GlobalConsoleManager.shared.appendOutput(
+                        "✗ Failed to thin \(app.appName): \(message)\n",
+                        source: CurrentPage.lipo.title
+                    )
                 }
             }
 
-            let overallSavings =
-                totalPreSize > 0
-                ? Int((Double(totalPreSize - totalPostSize) / Double(totalPreSize)) * 100) : 0
+            let actualSpaceSaved = totalPreSize > totalPostSize
+                ? totalPreSize - totalPostSize
+                : 0
+            let overallSavings = totalPreSize > 0
+                ? Int((Double(actualSpaceSaved) / Double(totalPreSize)) * 100)
+                : 0
 
             let titleFormat = NSLocalizedString(
                 "Space Savings: %d%%\nTotal Space Saved: %@", comment: "Lipo completion title")
             let messageFormat = NSLocalizedString(
-                "The total space savings between all the lipo'd apps\nSize Before: %@\nSize After: %@",
+                "The total space savings between the apps that were thinned\nSize Before: %@\nSize After: %@",
                 comment: "Lipo completion message")
 
-            let actualSpaceSaved = totalPreSize - totalPostSize
-            let title = String(
-                format: titleFormat, overallSavings, formatByte(size: Int64(actualSpaceSaved)).human
+            let savingsTitle = String(
+                format: titleFormat,
+                overallSavings,
+                formatByte(size: Int64(actualSpaceSaved)).human
             )
-            let message = String(
+            var message = String(
                 format: messageFormat, formatByte(size: Int64(totalPreSize)).human,
                 formatByte(size: Int64(totalPostSize)).human)
+            message += "\n\nModified: \(processedAppPaths.count)"
+            if !blockedApps.isEmpty {
+                message += "\nSkipped for signing safety: \(blockedApps.count)"
+            }
+            if !failedApps.isEmpty {
+                message += "\nFailed: \(failedApps.count)"
+            }
+            if !partiallyProcessedApps.isEmpty {
+                message += "\nPartially modified: \(partiallyProcessedApps.count)"
+            }
+            if !pruneFailures.isEmpty {
+                message += "\nTranslation pruning failed: \(pruneFailures.count)"
+            }
+            if unresolvedSelectionCount > 0 {
+                message += "\nNo longer eligible or available: \(unresolvedSelectionCount)"
+            }
+
+            let modifiedAnyApps = !processedAppPaths.isEmpty
+            let title = modifiedAnyApps ? savingsTitle : "Lipo Not Performed"
 
             await MainActor.run {
-                self.totalSpaceSaved += actualSpaceSaved
-                GlobalConsoleManager.shared.appendOutput("✓ Completed lipo operation - saved \(formatByte(size: Int64(actualSpaceSaved)).human)\n", source: CurrentPage.lipo.title)
-                showCustomAlert(title: title, message: message, style: .informational)
+                let hasProblems =
+                    !blockedApps.isEmpty ||
+                    !failedApps.isEmpty ||
+                    !partiallyProcessedApps.isEmpty ||
+                    !pruneFailures.isEmpty ||
+                    unresolvedSelectionCount > 0
+                if modifiedAnyApps {
+                    self.totalSpaceSaved += actualSpaceSaved
+                    let prefix = hasProblems ? "⚠" : "✓"
+                    GlobalConsoleManager.shared.appendOutput(
+                        "\(prefix) Modified \(processedAppPaths.count) app(s), skipped \(blockedApps.count), failed \(failedApps.count), partial \(partiallyProcessedApps.count), prune failures \(pruneFailures.count) - saved \(formatByte(size: Int64(actualSpaceSaved)).human)\n",
+                        source: CurrentPage.lipo.title
+                    )
+                } else {
+                    GlobalConsoleManager.shared.appendOutput(
+                        "⚠ No apps were modified; skipped \(blockedApps.count), failed \(failedApps.count), unavailable \(unresolvedSelectionCount)\n",
+                        source: CurrentPage.lipo.title
+                    )
+                }
+                showCustomAlert(
+                    title: title,
+                    message: message,
+                    style: modifiedAnyApps && !hasProblems
+                        ? .informational
+                        : .warning
+                )
                 self.isProcessing = false
 
-                // Recalculate savings for processed apps to update their display and filter them out
-                self.recalculateProcessedApps()
+                self.recalculateProcessedApps(processedAppPaths)
             }
         }
     }
 
-    private func recalculateProcessedApps() {
-        // Get a copy of currently selected apps before clearing the selection
-        let processedAppPaths = Array(selectedApps)
-
-        // Clear selections since these apps were processed
+    private func recalculateProcessedApps(_ processedAppPaths: [String]) {
         selectedApps.removeAll()
 
         // Recalculate savings for each processed app in the background

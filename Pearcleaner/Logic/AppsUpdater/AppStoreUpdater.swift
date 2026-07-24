@@ -4,6 +4,7 @@
 //
 //  Created by Alin Lupascu on 10/13/25.
 //
+//  Modified for the independently maintained Pearcleaner fork.
 
 import Foundation
 import CommerceKit
@@ -12,11 +13,36 @@ import AlinFoundation
 
 // MARK: - Error Types
 
-enum AppStoreUpdateError: Error {
+enum AppStoreUpdateError: Error, LocalizedError {
     case noDownloads
     case downloadFailed(String)
     case downloadCancelled
     case networkError(Error)
+    case iosUpdatesUnavailable
+    case manualAppStoreUpdateRequired
+
+    var errorDescription: String? {
+        switch self {
+        case .noDownloads:
+            return "No App Store download was created. Open the App Store to update this app."
+        case .downloadFailed(let message):
+            return message
+        case .downloadCancelled:
+            return "The App Store download was cancelled."
+        case .networkError(let error):
+            return error.localizedDescription
+        case .iosUpdatesUnavailable:
+            return "iPhone and iPad app updates must be installed using the App Store."
+        case .manualAppStoreUpdateRequired:
+            return "This macOS version requires this update to be installed using the App Store."
+        }
+    }
+}
+
+enum AppStoreUpdateRoute: Equatable {
+    case commerceKit
+    case iosAppStore
+    case affectedMacOSAppStore
 }
 
 // MARK: - AppStoreUpdater
@@ -26,27 +52,64 @@ class AppStoreUpdater {
 
     private init() {}
 
-    /// Check if running macOS version affected by installd bug
-    /// Affected: 14.8.2 (Darwin 24.6.2), 15.7.2 (Darwin 25.7.2), and 26.1+ (Darwin 26.1+)
-    private func needsInstalldWorkaround() -> Bool {
-        let version = ProcessInfo.processInfo.operatingSystemVersion
+    static func updateRoute(
+        isIOSApp: Bool,
+        operatingSystemVersion: OperatingSystemVersion
+    ) -> AppStoreUpdateRoute {
+        if isIOSApp {
+            return .iosAppStore
+        }
+        if needsInstalldWorkaround(for: operatingSystemVersion) {
+            return .affectedMacOSAppStore
+        }
+        return .commerceKit
+    }
 
-        // macOS 26.1+ (all versions)
-        if version.majorVersion >= 26 && version.minorVersion >= 1 {
+    /// Check if running macOS version affected by installd bug.
+    /// Affected: macOS 14.8.2+, 15.7.2+, and 26.1+.
+    static func needsInstalldWorkaround(for version: OperatingSystemVersion) -> Bool {
+        // ProcessInfo returns the macOS product version, not the Darwin
+        // kernel version. Compare the components lexicographically.
+        if isOperatingSystem(version, atLeast: OperatingSystemVersion(
+            majorVersion: 26,
+            minorVersion: 1,
+            patchVersion: 0
+        )) {
             return true
         }
 
-        // macOS 15.7.2 (Darwin 25.7.2)
-        if version.majorVersion == 25 && version.minorVersion == 7 && version.patchVersion >= 2 {
+        if version.majorVersion == 15,
+           isOperatingSystem(version, atLeast: OperatingSystemVersion(
+               majorVersion: 15,
+               minorVersion: 7,
+               patchVersion: 2
+           )) {
             return true
         }
 
-        // macOS 14.8.2 (Darwin 24.6.2)
-        if version.majorVersion == 24 && version.minorVersion == 6 && version.patchVersion >= 2 {
+        if version.majorVersion == 14,
+           isOperatingSystem(version, atLeast: OperatingSystemVersion(
+               majorVersion: 14,
+               minorVersion: 8,
+               patchVersion: 2
+           )) {
             return true
         }
 
         return false
+    }
+
+    private static func isOperatingSystem(
+        _ lhs: OperatingSystemVersion,
+        atLeast rhs: OperatingSystemVersion
+    ) -> Bool {
+        if lhs.majorVersion != rhs.majorVersion {
+            return lhs.majorVersion > rhs.majorVersion
+        }
+        if lhs.minorVersion != rhs.minorVersion {
+            return lhs.minorVersion > rhs.minorVersion
+        }
+        return lhs.patchVersion >= rhs.patchVersion
     }
 
     /// Update an app from the App Store with progress tracking
@@ -62,6 +125,21 @@ class AppStoreUpdater {
         progress: @escaping @Sendable (Double, String) -> Void,
         attemptCount: UInt32 = 3
     ) async throws {
+        switch Self.updateRoute(
+            isIOSApp: isIOSApp,
+            operatingSystemVersion:
+                ProcessInfo.processInfo.operatingSystemVersion
+        ) {
+        case .iosAppStore:
+            progress(0.0, "Update in App Store")
+            throw AppStoreUpdateError.iosUpdatesUnavailable
+        case .affectedMacOSAppStore:
+            progress(0.0, "Update in App Store")
+            throw AppStoreUpdateError.manualAppStoreUpdateRequired
+        case .commerceKit:
+            break
+        }
+
         await GlobalConsoleManager.shared.appendOutput("Initiating App Store download for adamID \(adamID)...\n", source: CurrentPage.updater.title)
 
         do {
@@ -73,16 +151,6 @@ class AppStoreUpdater {
 
             // Mark as update to indicate this is a redownload of owned app
             purchase.isUpdate = true
-
-            // iOS apps need special handling on ALL macOS versions (flag passed from caller)
-            // Check if workaround is needed for macOS apps on affected OS versions
-            let needsWorkaround = needsInstalldWorkaround()
-
-            if isIOSApp {
-                await GlobalConsoleManager.shared.appendOutput("Detected iOS app - using custom installer\n", source: CurrentPage.updater.title)
-            } else if needsWorkaround {
-                await GlobalConsoleManager.shared.appendOutput("Detected macOS version with installer bug - using custom installer\n", source: CurrentPage.updater.title)
-            }
 
             try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
                 // NOTE: iOS apps will show "Current Version Not Compatible" dialog
@@ -98,21 +166,11 @@ class AppStoreUpdater {
                         Task {
                             await GlobalConsoleManager.shared.appendOutput("Download started, monitoring progress...\n", source: CurrentPage.updater.title)
                             do {
-                                if isIOSApp {
-                                    // iOS apps: Use dedicated iOS observer (all macOS versions)
-                                    printOS("⚠️ Detected iOS app - using custom installer")
-                                    let observer = IOSDownloadObserver(adamID: adamID, appPath: appPath, progress: progress)
-                                    try await observer.observeDownloadQueue()
-                                } else if needsWorkaround {
-                                    // macOS apps on affected OS versions: Use workaround observer
-                                    printOS("⚠️ Detected macOS version with private frameworks installer bug - using custom installer")
-                                    let observer = MacOSDownloadObserverWithWorkaround(adamID: adamID, appPath: appPath, progress: progress)
-                                    try await observer.observeDownloadQueue()
-                                } else {
-                                    // macOS apps on unaffected OS versions: Use standard observer
-                                    let observer = AppStoreDownloadObserver(adamID: adamID, progress: progress)
-                                    try await observer.observeDownloadQueue()
-                                }
+                                let observer = AppStoreDownloadObserver(
+                                    adamID: adamID,
+                                    progress: progress
+                                )
+                                try await observer.observeDownloadQueue()
                                 await GlobalConsoleManager.shared.appendOutput("Download and installation completed successfully\n", source: CurrentPage.updater.title)
                                 continuation.resume()
                             } catch {
@@ -121,12 +179,15 @@ class AppStoreUpdater {
                             }
                         }
                     } else {
-                        // No downloads means already up to date
+                        // An empty response is ambiguous. Do not report success
+                        // without a download/install completion signal.
                         Task {
-                            await GlobalConsoleManager.shared.appendOutput("App is already up to date\n", source: CurrentPage.updater.title)
+                            await GlobalConsoleManager.shared.appendOutput("✗ App Store returned no download\n", source: CurrentPage.updater.title)
                         }
-                        progress(1.0, "Already up to date")
-                        continuation.resume()
+                        progress(0.0, "Update in App Store")
+                        continuation.resume(
+                            throwing: AppStoreUpdateError.noDownloads
+                        )
                     }
                 }
             }
@@ -256,386 +317,6 @@ private final class AppStoreDownloadObserver: NSObject, CKDownloadQueueObserver 
             default:
                 progressCallback(progress, "Processing...")
             }
-        }
-    }
-}
-
-// MARK: - IOSDownloadObserver
-
-/// Observer for iOS/iPad app downloads (IPA files)
-/// Preserves IPA to /tmp for installation
-/// Used for all iOS apps regardless of macOS version
-private final class IOSDownloadObserver: NSObject, CKDownloadQueueObserver {
-    private let adamID: UInt64
-    private let appPath: URL
-    private let progressCallback: @Sendable (Double, String) -> Void
-    private var completionHandler: (() -> Void)?
-    private var errorHandler: ((Error) -> Void)?
-    private var iosFilesPreserved = false  // Track if IPA was already preserved
-    private var hardLinkedIPAPath: String?  // Path to hard-linked IPA in /tmp
-    private var isManuallyInstalling = false
-
-    init(adamID: UInt64, appPath: URL, progress: @escaping @Sendable (Double, String) -> Void) {
-        self.adamID = adamID
-        self.appPath = appPath
-        self.progressCallback = progress
-        super.init()
-    }
-
-    func observeDownloadQueue(_ queue: CKDownloadQueue = .shared()) async throws {
-        let observerID = queue.add(self)
-        defer {
-            queue.removeObserver(observerID)
-        }
-
-        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
-            completionHandler = { [weak self] in
-                self?.completionHandler = nil
-                self?.errorHandler = nil
-                continuation.resume()
-            }
-            errorHandler = { [weak self] error in
-                self?.completionHandler = nil
-                self?.errorHandler = nil
-                continuation.resume(throwing: error)
-            }
-        }
-    }
-
-    // MARK: - CKDownloadQueueObserver Delegate Methods
-
-    func downloadQueue(_ queue: CKDownloadQueue, changedWithAddition download: SSDownload) {
-        // Download was added to queue - no action needed
-    }
-
-    func downloadQueue(_ queue: CKDownloadQueue, changedWithRemoval download: SSDownload) {
-        guard let metadata = download.metadata,
-              metadata.itemIdentifier == adamID,
-              let status = download.status else {
-            return
-        }
-
-        // iOS app download completed - always perform manual installation if IPA was preserved
-        // (CommerceKit cannot install iOS apps, so we handle it ourselves regardless of reported status)
-        if let ipaPath = hardLinkedIPAPath {
-            Task {
-                await performManualInstallation(ipaPath: ipaPath)
-            }
-        } else {
-            // No IPA preserved - this shouldn't happen, but handle gracefully
-            if status.isFailed || status.isCancelled {
-                errorHandler?(AppStoreUpdateError.downloadFailed("Failed to preserve IPA file"))
-            } else {
-                // Unexpected: CommerceKit claims success but we don't have an IPA
-                printOS("⚠️ Download completed but no IPA was preserved")
-                progressCallback(1.0, "Completed")
-                completionHandler?()
-            }
-        }
-    }
-
-    func downloadQueue(_ queue: CKDownloadQueue, statusChangedFor download: SSDownload) {
-        guard let metadata = download.metadata,
-              metadata.itemIdentifier == adamID,
-              let status = download.status,
-              let activePhase = status.activePhase else {
-            return
-        }
-
-        let phaseType = activePhase.phaseType
-        let percentComplete = status.percentComplete
-        let progress = max(0.0, min(1.0, Double(percentComplete)))
-
-        // At 80% progress, preserve IPA file before CommerceKit potentially cleans it up
-        if progress >= 0.80 && progress < 1.0 && !iosFilesPreserved {
-            preserveIPAFile()
-        }
-
-        // Report progress
-        if isManuallyInstalling {
-            progressCallback(progress, "Installing...")
-        } else if progress >= 1.0 {
-            progressCallback(progress, "Downloading...")
-        } else {
-            switch phaseType {
-            case 0: // Downloading
-                progressCallback(progress, "Downloading...")
-            case 4: // Initial/Preparing
-                progressCallback(progress, "Preparing...")
-            default:
-                progressCallback(progress, "Downloading...")
-            }
-        }
-    }
-
-    // MARK: - Helper Methods
-
-    private func performManualInstallation(ipaPath: String) async {
-        isManuallyInstalling = true
-
-        // 80%: Preparing installation
-        progressCallback(0.80, "Preparing installation...")
-        try? await Task.sleep(nanoseconds: 100_000_000) // 0.1 sec
-
-        do {
-            // 80-100%: IOSAppInstaller handles the rest (extraction, metadata, installation, cleanup)
-            try await IOSAppInstaller.installIOSApp(
-                ipaPath: ipaPath,
-                adamID: adamID,
-                existingAppPath: appPath,
-                progress: progressCallback
-            )
-
-            completionHandler?()
-        } catch {
-            errorHandler?(error)
-        }
-    }
-
-    private func preserveIPAFile() {
-        guard !iosFilesPreserved else { return }
-
-        let downloadDir = "\(CKDownloadDirectory(nil))/\(adamID)"
-        let tempDir = "/tmp/pearcleaner-ios-\(adamID)"
-
-        do {
-            // Create temp directory
-            try FileManager.default.createDirectory(atPath: tempDir, withIntermediateDirectories: true)
-
-            let contents = try FileManager.default.contentsOfDirectory(atPath: downloadDir)
-
-            if let ipaFile = contents.first(where: { $0.hasSuffix(".ipa") }) {
-                // Hard link IPA to /tmp (same pattern as PKG files)
-                let ipaSource = "\(downloadDir)/\(ipaFile)"
-                let ipaDest = "\(tempDir)/app.ipa"
-
-                try FileManager.default.linkItem(atPath: ipaSource, toPath: ipaDest)
-                hardLinkedIPAPath = ipaDest
-
-                iosFilesPreserved = true
-            } else {
-                printOS("⚠️ No IPA file found in \(downloadDir)")
-            }
-        } catch {
-            printOS("❌ Failed to preserve IPA: \(error.localizedDescription)")
-        }
-    }
-}
-
-// MARK: - MacOSDownloadObserverWithWorkaround
-
-/// Special observer for macOS versions affected by installd bug
-/// Downloads PKG, hard links it, then manually installs via HelperToolManager
-/// Used only for macOS apps on affected OS versions
-private final class MacOSDownloadObserverWithWorkaround: NSObject, CKDownloadQueueObserver {
-    private let adamID: UInt64
-    private let appPath: URL
-    private let progressCallback: @Sendable (Double, String) -> Void
-    private var completionHandler: (() -> Void)?
-    private var errorHandler: ((Error) -> Void)?
-    private var hardLinkedPkgPath: String?
-    private var hardLinkedReceiptPath: String?
-    private var isManuallyInstalling = false
-
-    init(adamID: UInt64, appPath: URL, progress: @escaping @Sendable (Double, String) -> Void) {
-        self.adamID = adamID
-        self.appPath = appPath
-        self.progressCallback = progress
-        super.init()
-    }
-
-    func observeDownloadQueue(_ queue: CKDownloadQueue = .shared()) async throws {
-        let observerID = queue.add(self)
-        defer {
-            queue.removeObserver(observerID)
-        }
-
-        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
-            completionHandler = { [weak self] in
-                self?.completionHandler = nil
-                self?.errorHandler = nil
-                continuation.resume()
-            }
-            errorHandler = { [weak self] error in
-                self?.completionHandler = nil
-                self?.errorHandler = nil
-                continuation.resume(throwing: error)
-            }
-        }
-    }
-
-    // MARK: - CKDownloadQueueObserver Delegate Methods
-
-    func downloadQueue(_ queue: CKDownloadQueue, changedWithAddition download: SSDownload) {
-        // Download was added to queue - no action needed
-    }
-
-    func downloadQueue(_ queue: CKDownloadQueue, changedWithRemoval download: SSDownload) {
-        guard let metadata = download.metadata,
-              metadata.itemIdentifier == adamID,
-              let status = download.status else {
-            return
-        }
-
-        // Download completed (installd will fail, but we have the PKG hard linked)
-        if status.isFailed || status.isCancelled {
-            // Expected failure on affected macOS versions - proceed with manual installation
-            if let pkgPath = hardLinkedPkgPath {
-                Task {
-                    await performManualInstallation(pkgPath: pkgPath)
-                }
-            } else {
-                errorHandler?(AppStoreUpdateError.downloadFailed("Failed to preserve PKG file"))
-            }
-        } else {
-            // Unexpected success (installd worked somehow)
-            if let pkgPath = hardLinkedPkgPath {
-                // Clean up temp directory since installd succeeded
-                let tempDir = (pkgPath as NSString).deletingLastPathComponent
-                try? FileManager.default.removeItem(atPath: tempDir)
-                hardLinkedPkgPath = nil
-                hardLinkedReceiptPath = nil
-            }
-            progressCallback(1.0, "Completed")
-            completionHandler?()
-        }
-    }
-
-    func downloadQueue(_ queue: CKDownloadQueue, statusChangedFor download: SSDownload) {
-        guard let metadata = download.metadata,
-              metadata.itemIdentifier == adamID,
-              let status = download.status,
-              let activePhase = status.activePhase else {
-            return
-        }
-
-        let phaseType = activePhase.phaseType
-        let percentComplete = status.percentComplete
-        let progress = max(0.0, min(1.0, Double(percentComplete)))
-
-        // At 80% progress, create hard link to preserve PKG before installd fails
-        if progress >= 0.80 && progress < 1.0 && hardLinkedPkgPath == nil && !isManuallyInstalling {
-            createHardLinkToPKG()
-        }
-
-        // Report progress
-        if isManuallyInstalling {
-            progressCallback(progress, "Installing...")
-        } else if progress >= 1.0 {
-            progressCallback(progress, "Downloading...")
-        } else {
-            switch phaseType {
-            case 0: // Downloading
-                progressCallback(progress, "Downloading...")
-            case 4: // Initial/Preparing
-                progressCallback(progress, "Preparing...")
-            default:
-                progressCallback(progress, "Downloading...")
-            }
-        }
-    }
-
-    // MARK: - Helper Methods
-
-    private func createHardLinkToPKG() {
-
-        let downloadDir = "\(CKDownloadDirectory(nil))/\(adamID)"
-        let tempDir = "/tmp/pearcleaner-appstore-\(adamID)"
-
-        do {
-            // Create temp directory
-            try FileManager.default.createDirectory(atPath: tempDir, withIntermediateDirectories: true)
-
-            let contents = try FileManager.default.contentsOfDirectory(atPath: downloadDir)
-
-            // Find PKG file (macOS apps only)
-            if let pkgFile = contents.first(where: { $0.hasSuffix(".pkg") }) {
-                // Hard link PKG file
-                let pkgSource = "\(downloadDir)/\(pkgFile)"
-                let pkgDest = "\(tempDir)/\(pkgFile)"
-
-                try FileManager.default.linkItem(atPath: pkgSource, toPath: pkgDest)
-                hardLinkedPkgPath = pkgDest
-
-                // Hard link receipt file
-                let receiptSource = "\(downloadDir)/receipt"
-                let receiptDest = "\(tempDir)/receipt"
-                if FileManager.default.fileExists(atPath: receiptSource) {
-                    try FileManager.default.linkItem(atPath: receiptSource, toPath: receiptDest)
-                    hardLinkedReceiptPath = receiptDest
-                } else {
-                    printOS("⚠️ No receipt file found in \(downloadDir)")
-                }
-            } else {
-                printOS("⚠️ No PKG file found in \(downloadDir)")
-            }
-        } catch {
-            printOS("❌ Failed to create hard links: \(error.localizedDescription)")
-        }
-    }
-
-    private func performManualInstallation(pkgPath: String) async {
-        isManuallyInstalling = true
-
-        // 80-85%: Preparing installation
-        progressCallback(0.80, "Preparing installation...")
-        try? await Task.sleep(nanoseconds: 100_000_000) // 0.1 sec
-        progressCallback(0.85, "Installing...")
-
-        // 85-90%: Running installer (Script 1)
-        let installerScript = "installer -pkg \(pkgPath.shellQuoted) -target /"
-        let result = try! await runSUCommand(
-            installerScript,
-            errorContext: "Failed to install package",
-            throwOnFailure: false
-        )
-
-        progressCallback(0.90, "Configuring App Store receipt...")
-
-        // 90-95%: Inject receipt and refresh metadata (Script 2 - only runs if Script 1 succeeds)
-        if result.0, let receiptPath = hardLinkedReceiptPath, FileManager.default.fileExists(atPath: receiptPath) {
-            let appPathString = appPath.path
-            let receiptDir = "\(appPathString)/Contents/_MASReceipt"
-            let receiptDestPath = "\(receiptDir)/receipt"
-
-            // Create receipt directory, copy receipt, set permissions, and set ownership to root:wheel (chained commands)
-            let receiptScript = """
-            mkdir -p \(receiptDir.shellQuoted) && \
-            cp \(receiptPath.shellQuoted) \(receiptDestPath.shellQuoted) && \
-            chmod 644 \(receiptDestPath.shellQuoted) && \
-            chown 0:0 \(receiptDestPath.shellQuoted)
-            """
-
-            let receiptResult = try! await runSUCommand(
-                receiptScript,
-                errorContext: "Failed to configure App Store receipt",
-                throwOnFailure: false
-            )
-
-            if receiptResult.0 {
-                // Force immediate Spotlight re-indexing
-                let mdimportProcess = Process()
-                mdimportProcess.executableURL = URL(fileURLWithPath: "/usr/bin/mdimport")
-                mdimportProcess.arguments = ["-i", appPathString]
-                try? mdimportProcess.run()
-                mdimportProcess.waitUntilExit()
-            }
-        }
-
-        progressCallback(0.95, "Cleaning up...")
-
-        // 95-100%: Clean up temp directory
-        if let pkgPath = hardLinkedPkgPath {
-            let tempDir = (pkgPath as NSString).deletingLastPathComponent
-            try? FileManager.default.removeItem(atPath: tempDir)
-        }
-
-        if result.0 {
-            progressCallback(1.0, "Completed")
-            completionHandler?()
-        } else {
-            printOS("❌ Manual PKG installation failed: \(result.1)")
-            errorHandler?(AppStoreUpdateError.downloadFailed("Installation failed: \(result.1)"))
         }
     }
 }

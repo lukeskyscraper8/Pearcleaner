@@ -4,9 +4,62 @@
 //
 //  Created by Alin Lupascu on 09/29/25.
 //
+// Modified for the independently maintained Pearcleaner fork.
 
 import SwiftUI
 import AlinFoundation
+
+enum FileSearchRenameValidationError: Error, Equatable {
+    case invalidName
+    case destinationExists
+}
+
+func validatedFileSearchRenameDestination(
+    sourceURL: URL,
+    newName: String,
+    destinationExists: (URL) -> Bool
+) -> Result<URL, FileSearchRenameValidationError> {
+    let parentURL = sourceURL.deletingLastPathComponent().standardizedFileURL
+    let invalidName =
+        newName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ||
+        newName == "." ||
+        newName == ".." ||
+        newName.contains("/") ||
+        newName.contains("\0") ||
+        (newName as NSString).lastPathComponent != newName
+
+    guard !invalidName else {
+        return .failure(.invalidName)
+    }
+
+    let destinationURL = parentURL.appendingPathComponent(newName)
+    guard destinationURL.deletingLastPathComponent().standardizedFileURL == parentURL else {
+        return .failure(.invalidName)
+    }
+    guard !destinationExists(destinationURL) else {
+        return .failure(.destinationExists)
+    }
+
+    return .success(destinationURL)
+}
+
+func matchingFileSearchUndoActionIndex(
+    actionPaths: [[String]],
+    restoredPaths: [String]
+) -> Int? {
+    let restoredPathSet = Set(restoredPaths.map {
+        URL(fileURLWithPath: $0).standardizedFileURL.path
+    })
+    guard !restoredPathSet.isEmpty else {
+        return nil
+    }
+
+    return actionPaths.lastIndex { action in
+        Set(action.map {
+            URL(fileURLWithPath: $0).standardizedFileURL.path
+        }) == restoredPathSet
+    }
+}
 
 struct FileSearchView: View {
     @EnvironmentObject var appState: AppState
@@ -40,7 +93,7 @@ struct FileSearchView: View {
     @State private var filterText: String = ""
     @State private var editingItemId: UUID?
     @State private var editingText: String = ""
-    @State private var deletedItemsCache: [FileSearchResult] = []
+    @State private var deletedItemActions: [[FileSearchResult]] = []
     @FocusState private var isEditingFocused: Bool
     @AppStorage("settings.interface.scrollIndicators") private var scrollIndicators: Bool = false
     @AppStorage("settings.interface.animationEnabled") private var animationEnabled: Bool = true
@@ -447,14 +500,41 @@ struct FileSearchView: View {
                 .background(ThemeColors.shared(for: colorScheme).primaryBG)
             }
         }
-        .onReceive(NotificationCenter.default.publisher(for: NSNotification.Name("FileSearchViewShouldUndo"))) { _ in
-            // Restore deleted items from cache after undo
-            if !deletedItemsCache.isEmpty {
-                results.append(contentsOf: deletedItemsCache)
-                deletedItemsCache.removeAll()
+        .onReceive(NotificationCenter.default.publisher(for: NSNotification.Name("FileSearchViewShouldUndo"))) { notification in
+            // Restore only the cached action whose paths were actually restored.
+            guard
+                let restoredPaths = notification.userInfo?["restoredPaths"] as? [String],
+                !restoredPaths.isEmpty
+            else {
+                return
             }
+
+            guard let actionIndex = matchingFileSearchUndoActionIndex(
+                actionPaths: deletedItemActions.map { action in
+                    action.map(\.url.path)
+                },
+                restoredPaths: restoredPaths
+            ) else {
+                return
+            }
+
+            let restoredItems = deletedItemActions.remove(at: actionIndex)
+            let existingPaths = Set(results.map { $0.url.standardizedFileURL.path })
+            results.append(contentsOf: restoredItems.filter {
+                !existingPaths.contains($0.url.standardizedFileURL.path)
+            })
         }
-        .onReceive(NotificationCenter.default.publisher(for: NSNotification.Name("FileSearchViewShouldRefresh"))) { _ in
+        .onReceive(NotificationCenter.default.publisher(for: NSNotification.Name("FileSearchViewShouldRefresh"))) { notification in
+            if let restoredPaths = notification.userInfo?["restoredPaths"] as? [String] {
+                let restoredPathSet = Set(restoredPaths.map {
+                    URL(fileURLWithPath: $0).standardizedFileURL.path
+                })
+                deletedItemActions.removeAll { action in
+                    !Set(action.map { $0.url.standardizedFileURL.path })
+                        .isDisjoint(with: restoredPathSet)
+                }
+            }
+
             // Re-run search with current parameters if a search has been performed
             if hasSearched {
                 startSearch()
@@ -528,7 +608,7 @@ struct FileSearchView: View {
                     hasSearched = false
                     searchStartTime = nil
                     searchElapsedTime = 0
-                    deletedItemsCache.removeAll()
+                    deletedItemActions.removeAll()
                     activeFilters.removeAll()
                 } label: {
                     Label("Clear", systemImage: "trash")
@@ -683,19 +763,56 @@ struct FileSearchView: View {
     }
 
     private func performRename(result: FileSearchResult, newName: String) {
-        let newURL = result.url.deletingLastPathComponent().appendingPathComponent(newName)
+        let destinationResult = validatedFileSearchRenameDestination(
+            sourceURL: result.url,
+            newName: newName,
+            destinationExists: {
+                FileManager.default.fileExists(atPath: $0.path)
+            }
+        )
 
-        // Always use helper for file operations (works for all file types)
-        let command = "/bin/mv \(result.url.path.shellQuoted) \(newURL.path.shellQuoted)"
+        let newURL: URL
+        switch destinationResult {
+        case .success(let destinationURL):
+            newURL = destinationURL
+        case .failure(.invalidName):
+            showCustomAlert(
+                title: "Invalid Name",
+                message: "Enter a single file name without path separators.",
+                style: .warning
+            )
+            return
+        case .failure(.destinationExists):
+            showCustomAlert(
+                title: "Rename Failed",
+                message: "An item named '\(newName)' already exists in this folder.",
+                style: .critical
+            )
+            return
+        }
+        let parentURL = result.url.deletingLastPathComponent().standardizedFileURL
 
         Task {
-            let moveResult = try! await runSUCommand(
-                command,
-                errorContext: "Failed to rename file",
-                throwOnFailure: false
-            )
+            guard FileManager.default.isWritableFile(atPath: parentURL.path) else {
+                showCustomAlert(
+                    title: "Rename Skipped",
+                    message:
+                        "Pearcleaner does not rename protected paths through its privileged helper. No files were modified.",
+                    style: .warning
+                )
+                return
+            }
 
-            if moveResult.0 {
+            var moveSucceeded = false
+            var failureDescription = "The item could not be moved."
+            do {
+                try FileManager.default.moveItem(at: result.url, to: newURL)
+                moveSucceeded = true
+            } catch {
+                failureDescription = error.localizedDescription
+            }
+
+            if moveSucceeded {
                 // Update the result in the list
                 if let index = results.firstIndex(where: { $0.id == result.id }) {
                 let updatedResult = FileSearchResult(
@@ -708,13 +825,14 @@ struct FileSearchView: View {
                     icon: result.icon
                 )
                 results[index] = updatedResult
+                    if selectedResults.remove(result.id) != nil {
+                        selectedResults.insert(updatedResult.id)
+                    }
                 }
             } else {
-                let error = NSError(domain: "com.pearcleaner.rename", code: 1,
-                                  userInfo: [NSLocalizedDescriptionKey: "Failed to rename file"])
                 showCustomAlert(
                     title: "Rename Failed",
-                    message: "Failed to rename '\(result.name)' to '\(newName)'. Error: \(error.localizedDescription)",
+                    message: "Failed to rename '\(result.name)' to '\(newName)'. \(failureDescription)",
                     style: .critical
                 )
             }
@@ -724,24 +842,29 @@ struct FileSearchView: View {
     private func deleteFile(_ result: FileSearchResult) {
         Task {
             GlobalConsoleManager.shared.appendOutput("Starting deletion of \(result.name)...\n", source: CurrentPage.fileSearch.title)
-            let success = await withCheckedContinuation { continuation in
+            let deletionResult = await withCheckedContinuation { continuation in
                 DispatchQueue.global(qos: .userInitiated).async {
-                    let success = FileManagerUndo.shared.deleteFiles(at: [result.url], bundleName: "File Search - \(result.name)")
-                    continuation.resume(returning: success)
+                    let deletionResult = moveFilesToTrashWithResult(
+                        at: [result.url],
+                        bundleName: "File Search - \(result.name)"
+                    )
+                    continuation.resume(returning: deletionResult)
                 }
             }
 
             await MainActor.run {
-                if success {
+                if deletionResult.allSucceeded {
                     GlobalConsoleManager.shared.appendOutput("✓ Completed deletion of \(result.name)\n", source: CurrentPage.fileSearch.title)
-                    // Cache the deleted item before removing
-                    deletedItemsCache.append(result)
+                    cacheDeletedAction([result])
                     results.removeAll { $0.id == result.id }
                     selectedResults.remove(result.id)
                 } else {
+                    let message = deletionResult.protectedURLs.isEmpty
+                        ? "Failed to delete '\(result.name)'. The file may require additional permissions or may not exist."
+                        : "Pearcleaner skipped this protected path. Privileged path-based Trash moves are disabled for safety, so no files were modified."
                     showCustomAlert(
                         title: "Deletion Failed",
-                        message: "Failed to delete '\(result.name)'. The file may require additional permissions or may not exist.",
+                        message: message,
                         style: .critical
                     )
                 }
@@ -755,30 +878,61 @@ struct FileSearchView: View {
 
         Task {
             GlobalConsoleManager.shared.appendOutput("Starting deletion of \(itemsToDelete.count) selected file(s)...\n", source: CurrentPage.fileSearch.title)
-            let success = await withCheckedContinuation { continuation in
+            let deletionResult = await withCheckedContinuation { continuation in
                 DispatchQueue.global(qos: .userInitiated).async {
                     let bundleName = "File Search (\(itemsToDelete.count) items)"
-                    let success = FileManagerUndo.shared.deleteFiles(at: urlsToDelete, bundleName: bundleName)
-                    continuation.resume(returning: success)
+                    let deletionResult = moveFilesToTrashWithResult(
+                        at: urlsToDelete,
+                        bundleName: bundleName
+                    )
+                    continuation.resume(returning: deletionResult)
                 }
             }
 
             await MainActor.run {
-                if success {
-                    GlobalConsoleManager.shared.appendOutput("✓ Completed deletion of \(itemsToDelete.count) file(s)\n", source: CurrentPage.fileSearch.title)
-                    // Cache the deleted items before removing
-                    deletedItemsCache.append(contentsOf: itemsToDelete)
-                    let deletedIds = Set(itemsToDelete.map { $0.id })
+                let movedPaths = Set(deletionResult.movedURLs.map {
+                    $0.standardizedFileURL.path
+                })
+                let deletedItems = itemsToDelete.filter {
+                    movedPaths.contains($0.url.standardizedFileURL.path)
+                }
+
+                if !deletedItems.isEmpty {
+                    cacheDeletedAction(deletedItems)
+                    let deletedIds = Set(deletedItems.map { $0.id })
                     results.removeAll { deletedIds.contains($0.id) }
-                    selectedResults.removeAll()
+                    selectedResults.subtract(deletedIds)
+                }
+
+                if deletionResult.allSucceeded {
+                    GlobalConsoleManager.shared.appendOutput("✓ Completed deletion of \(itemsToDelete.count) file(s)\n", source: CurrentPage.fileSearch.title)
                 } else {
+                    let message: String
+                    if !deletionResult.protectedURLs.isEmpty {
+                        message =
+                            "Pearcleaner skipped \(deletionResult.protectedURLs.count) protected path(s). Privileged path-based Trash moves are disabled for safety, so no selected files were modified."
+                    } else if deletionResult.isPartial {
+                        message =
+                            "\(deletionResult.movedURLs.count) item(s) were moved to Trash. \(deletionResult.failedURLs.count) item(s) could not be moved and remain selected."
+                    } else {
+                        message = "None of the selected files could be moved to Trash."
+                    }
                     showCustomAlert(
-                        title: "Deletion Failed",
-                        message: "Failed to delete some selected files. They may require additional permissions or may not exist.",
+                        title: deletionResult.isPartial ? "Deletion Partially Completed" : "Deletion Failed",
+                        message: message,
                         style: .critical
                     )
                 }
             }
+        }
+    }
+
+    @MainActor
+    private func cacheDeletedAction(_ items: [FileSearchResult]) {
+        guard !items.isEmpty else { return }
+        deletedItemActions.append(items)
+        if deletedItemActions.count > 10 {
+            deletedItemActions.removeFirst(deletedItemActions.count - 10)
         }
     }
 

@@ -24,6 +24,8 @@ DerivedData/
 
 ## Obj-C/Swift specific
 *.hmap
+*.profraw
+*.profdata
 
 ## App packaging
 *.ipa

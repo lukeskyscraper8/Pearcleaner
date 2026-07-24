@@ -4,6 +4,7 @@
 //
 //  Created by Alin Lupascu on 2/6/25.
 //
+// Modified for the independently maintained Pearcleaner fork.
 
 import Foundation
 import AppKit
@@ -207,26 +208,10 @@ class AppPathFinder {
                     if shouldSkipItem(normalizedItemName, at: scannedItemURL) { continue }
 
                     if specificCondition(normalizedItemName: normalizedItemName, scannedItemURL: scannedItemURL) {
-                        // Determine what to add: matched item or its parent (for vendor folders)
-                        let itemToAdd: URL
-
-                        // For depth=2 matches in Library root searches, check if parent is a vendor folder
-                        if isLibraryRootSearch && currentDepth == 2 {
-                            let parentURL = scannedItemURL.deletingLastPathComponent()
-                            let parentName = parentURL.lastPathComponent
-
-                            // Add parent directory if it's NOT a standard macOS directory
-                            // This captures vendor folders like /Library/Objective-See/ instead of /Library/Objective-See/LuLu/
-                            if !Locations.standardLibrarySubdirectories.contains(parentName) {
-                                itemToAdd = parentURL
-                            } else {
-                                itemToAdd = scannedItemURL
-                            }
-                        } else {
-                            itemToAdd = scannedItemURL
-                        }
-
-                        localResults.append(itemToAdd)
+                        // A child-name match does not prove exclusive ownership of
+                        // its vendor directory. Selecting the parent could remove
+                        // sibling products, so only select the matched item.
+                        localResults.append(scannedItemURL)
                     }
 
                     // If this is a directory and we haven't reached max depth, mark for recursive search

@@ -3,6 +3,7 @@
 //  Pearcleaner
 //
 //  Created by Alin Lupascu on 10/13/25.
+//  Modified for the independently maintained Pearcleaner fork.
 //
 
 import Foundation
@@ -140,7 +141,9 @@ class AppStoreUpdateChecker {
                 appStoreURL: appStoreInfo.appStoreURL,
                 status: .idle,
                 progress: 0.0,
-                isSelectedForUpdate: true,
+                // Wrapped iPhone/iPad apps must be updated in the App Store
+                // and must never enter Pearcleaner's batch installer.
+                isSelectedForUpdate: !isIOSApp,
                 releaseTitle: nil,
                 releaseDescription: appStoreInfo.releaseNotes,
                 releaseNotesLink: nil,

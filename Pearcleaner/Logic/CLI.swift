@@ -1,10 +1,27 @@
+// Modified for the independently maintained Pearcleaner fork.
+
 import AlinFoundation
 import ArgumentParser
-import Darwin
 import Foundation
 import ServiceManagement
 import SwiftUI
 import UniformTypeIdentifiers
+import Darwin
+
+func cliRootTrashRefusalMessage(effectiveUserID: uid_t) -> String? {
+    guard effectiveUserID == 0 else { return nil }
+    return "Pearcleaner refuses Trash operations while running as root. Rerun the command without sudo."
+}
+
+private func printCLIProtectedTrashRefusal(_ protectedFiles: [URL]) {
+    printOS(
+        "Protected paths cannot be moved safely to the user's Trash. Use Finder, Homebrew, or another trusted administrative workflow; do not rerun Pearcleaner with sudo.\n"
+    )
+    printOS("Protected paths:\n")
+    for file in protectedFiles {
+        printOS(file.path)
+    }
+}
 
 // Main command structure
 struct PearCLI: ParsableCommand {
@@ -19,7 +36,6 @@ struct PearCLI: ParsableCommand {
             UninstallAll.self,
             RemoveOrphaned.self,
             Helper.self,
-            AskPassword.self,
         ]
     )
 
@@ -88,17 +104,16 @@ struct PearCLI: ParsableCommand {
         )
 
         func run() throws {
-            // Get installed apps for filtering
-            DispatchQueue.global(qos: .userInitiated).async {
-                let _ = getSortedApps(paths: PearCLI.fsm.folderPaths, useStreaming: false)
-            }
-
+            // Orphan classification must use the completed application scan. Using
+            // AppState here races the asynchronous GUI state and can classify every
+            // support file as orphaned.
+            let installedApps = getSortedApps(paths: PearCLI.fsm.folderPaths, useStreaming: false)
 
             // Find orphaned files
             let foundPaths = ReversePathsSearcher(
                 locations: PearCLI.locations,
                 fsm: PearCLI.fsm,
-                sortedApps: AppState.shared.sortedApps
+                sortedApps: installedApps
             )
                 .reversePathsSearchCLI()
 
@@ -121,12 +136,29 @@ struct PearCLI: ParsableCommand {
         var path: String
 
         func run() async throws {
+            if let message = cliRootTrashRefusalMessage(
+                effectiveUserID: geteuid()
+            ) {
+                printOS("\(message)\n")
+                Foundation.exit(1)
+            }
+
             // Convert the provided string path to a URL
             let url = URL(fileURLWithPath: path)
 
             // Fetch the app info and safely unwrap
             guard let appInfo = AppInfoFetcher.getAppInfo(atPath: url) else {
                 printOS("Error: Invalid path or unable to fetch app info at path: \(path)\n")
+                Foundation.exit(1)
+            }
+
+            let protectedFiles = [appInfo.path].filter {
+                !FileManager.default.isWritableFile(
+                    atPath: $0.deletingLastPathComponent().path
+                )
+            }
+            if !protectedFiles.isEmpty {
+                printCLIProtectedTrashRefusal(protectedFiles)
                 Foundation.exit(1)
             }
 
@@ -155,6 +187,13 @@ struct PearCLI: ParsableCommand {
         var path: String
 
         func run() async throws {
+            if let message = cliRootTrashRefusalMessage(
+                effectiveUserID: geteuid()
+            ) {
+                printOS("\(message)\n")
+                Foundation.exit(1)
+            }
+
             // Convert the provided string path to a URL
             let url = URL(fileURLWithPath: path)
 
@@ -172,17 +211,13 @@ struct PearCLI: ParsableCommand {
 
             // Check if any file is protected (non-writable)
             let protectedFiles = foundPaths.filter {
-                !FileManager.default.isWritableFile(atPath: $0.path)
+                !FileManager.default.isWritableFile(
+                    atPath: $0.deletingLastPathComponent().path
+                )
             }
 
-            // If protected files are found, echo message and exit
-            if !protectedFiles.isEmpty && !HelperToolManager.shared.isHelperToolInstalled {
-                printOS("Protected files detected. Please run this command with sudo:\n")
-                printOS("sudo pearcleaner uninstall-all \(path)")
-                printOS("\nProtected files:\n")
-                for file in protectedFiles {
-                    printOS(file.path)
-                }
+            if !protectedFiles.isEmpty {
+                printCLIProtectedTrashRefusal(Array(protectedFiles))
                 Foundation.exit(1)
             }
 
@@ -209,33 +244,34 @@ struct PearCLI: ParsableCommand {
         )
 
         func run() throws {
-
-            // Get installed apps for filtering
-            DispatchQueue.global(qos: .userInitiated).async {
-                let _ = getSortedApps(paths: PearCLI.fsm.folderPaths, useStreaming: false)
+            if let message = cliRootTrashRefusalMessage(
+                effectiveUserID: geteuid()
+            ) {
+                printOS("\(message)\n")
+                Foundation.exit(1)
             }
+
+            // Complete the installed-application scan before deciding which files
+            // are orphaned. An empty/stale AppState list is destructive here.
+            let installedApps = getSortedApps(paths: PearCLI.fsm.folderPaths, useStreaming: false)
 
             // Find orphaned files
             let foundPaths = ReversePathsSearcher(
                 locations: PearCLI.locations,
                 fsm: PearCLI.fsm,
-                sortedApps: AppState.shared.sortedApps
+                sortedApps: installedApps
             )
                 .reversePathsSearchCLI()
 
             // Check if any file is protected (non-writable)
             let protectedFiles = foundPaths.filter {
-                !FileManager.default.isWritableFile(atPath: $0.path)
+                !FileManager.default.isWritableFile(
+                    atPath: $0.deletingLastPathComponent().path
+                )
             }
 
-            // If protected files are found, echo message and exit
-            if !protectedFiles.isEmpty && !HelperToolManager.shared.isHelperToolInstalled {
-                printOS("Protected files detected. Please run this command with sudo:\n")
-                printOS("sudo pearcleaner remove-orphaned")
-                printOS("\nProtected files:\n")
-                for file in protectedFiles {
-                    printOS(file.path)
-                }
+            if !protectedFiles.isEmpty {
+                printCLIProtectedTrashRefusal(protectedFiles)
                 Foundation.exit(1)
             }
 
@@ -349,73 +385,11 @@ struct PearCLI: ParsableCommand {
 
         // Helper function to check if privileged helper is enabled
         private func isHelperEnabled() async -> Bool {
-            let result = try! await runSUCommand("whoami", skipHelperCheck: true)
+            guard let result = try? await runSUCommand("whoami", skipHelperCheck: true) else {
+                return false
+            }
             return result.0 && result.1.trimmingCharacters(in: .whitespacesAndNewlines) == "root"
         }
     }
 
-    struct AskPassword: ParsableCommand {
-        static var configuration = CommandConfiguration(
-            commandName: "ask-password",
-            abstract: "Display password prompt for sudo operations",
-            shouldDisplay: false
-        )
-
-        @Option(name: .long, help: .hidden)
-        var message: String = "Homebrew is requesting your password to perform a privileged action"
-
-        func run() throws {
-            guard Self.isInvokedBySudo() else {
-                FileHandle.standardError.write(
-                    Data("Pearcleaner ask-password may only be invoked by /usr/bin/sudo.\n".utf8)
-                )
-                Darwin.exit(1)
-            }
-
-            _ = NSApplication.shared
-            guard let password = Self.showPasswordDialog(message: message) else {
-                Darwin.exit(1)
-            }
-
-            // SUDO_ASKPASS requires the password on stdout. It is never cached or
-            // sent over cross-process notifications.
-            print(password)
-            Darwin.exit(0)
-        }
-
-        private static func isInvokedBySudo() -> Bool {
-            // PROC_PIDPATHINFO_MAXSIZE is unavailable to Swift because it is a
-            // compound C macro. Its Darwin value is 4 * MAXPATHLEN (4096).
-            var pathBuffer = [CChar](repeating: 0, count: 4_096)
-            let length = proc_pidpath(getppid(), &pathBuffer, UInt32(pathBuffer.count))
-            guard length > 0 else { return false }
-            return String(cString: pathBuffer) == "/usr/bin/sudo"
-        }
-
-        // MARK: - Show Password Dialog
-        private static func showPasswordDialog(message: String) -> String? {
-            let alert = NSAlert()
-            alert.messageText = "Pearcleaner"
-            alert.informativeText = message
-            alert.alertStyle = .informational
-            alert.addButton(withTitle: "OK")
-            alert.addButton(withTitle: "Cancel")
-
-            let secureTextField = NSSecureTextField(frame: NSRect(x: 0, y: 0, width: 300, height: 24))
-            secureTextField.placeholderString = "Password"
-            alert.accessoryView = secureTextField
-            alert.window.initialFirstResponder = secureTextField
-
-            NSApp.activate(ignoringOtherApps: true)
-
-            let response = alert.runModal()
-
-            if response == .alertFirstButtonReturn {
-                let password = secureTextField.stringValue
-                return password.isEmpty ? nil : password
-            }
-
-            return nil
-        }
-    }
 }

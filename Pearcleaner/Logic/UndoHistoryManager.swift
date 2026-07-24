@@ -24,13 +24,13 @@ struct UndoHistoryRecord: Codable, Identifiable {
     }
 
     // Custom encoding/decoding for tuples
-    init(id: UUID = UUID(), timestamp: Date, appName: String, bundleFolderPath: String, filePairs: [(String, String)], fileCount: Int) {
+    init(id: UUID = UUID(), timestamp: Date, appName: String, bundleFolderPath: String, filePairs: [(String, String)], fileCount _: Int) {
         self.id = id
         self.timestamp = timestamp
         self.appName = appName
         self.bundleFolderPath = bundleFolderPath
         self.filePairs = filePairs
-        self.fileCount = fileCount
+        self.fileCount = filePairs.count
     }
 
     init(from decoder: Decoder) throws {
@@ -39,10 +39,16 @@ struct UndoHistoryRecord: Codable, Identifiable {
         timestamp = try container.decode(Date.self, forKey: .timestamp)
         appName = try container.decode(String.self, forKey: .appName)
         bundleFolderPath = try container.decode(String.self, forKey: .bundleFolderPath)
-        fileCount = try container.decode(Int.self, forKey: .fileCount)
-
         let pairs = try container.decode([[String]].self, forKey: .filePairs)
+        guard pairs.allSatisfy({ $0.count == 2 }) else {
+            throw DecodingError.dataCorruptedError(
+                forKey: .filePairs,
+                in: container,
+                debugDescription: "Each undo-history file pair must contain exactly two paths."
+            )
+        }
         filePairs = pairs.map { ($0[0], $0[1]) }
+        fileCount = filePairs.count
     }
 
     func encode(to encoder: Encoder) throws {
@@ -56,6 +62,37 @@ struct UndoHistoryRecord: Codable, Identifiable {
         let pairs = filePairs.map { [$0.original, $0.trashed] }
         try container.encode(pairs, forKey: .filePairs)
     }
+}
+
+func validatedUndoHistoryRestorePairs(
+    _ record: UndoHistoryRecord,
+    trashRoot: URL,
+    isDirectory: (URL) -> Bool = pathIsDirectoryWithoutFollowingSymlinks
+) -> [(trashURL: URL, originalURL: URL)]? {
+    let standardizedTrashRoot = trashRoot.standardizedFileURL
+    let bundleFolder = URL(fileURLWithPath: record.bundleFolderPath).standardizedFileURL
+    guard isGeneratedTrashBundleFolder(bundleFolder, trashRoot: standardizedTrashRoot),
+          isDirectory(standardizedTrashRoot),
+          isDirectory(bundleFolder) else {
+        return nil
+    }
+
+    let pairs = record.filePairs.map {
+        (
+            trashURL: URL(fileURLWithPath: $0.trashed).standardizedFileURL,
+            originalURL: URL(fileURLWithPath: $0.original).standardizedFileURL
+        )
+    }
+    guard !pairs.isEmpty,
+          pairs.allSatisfy({
+              $0.trashURL.deletingLastPathComponent() == bundleFolder &&
+              $0.trashURL != $0.originalURL
+          }),
+          Set(pairs.map { $0.trashURL.path }).count == pairs.count,
+          Set(pairs.map { $0.originalURL.path }).count == pairs.count else {
+        return nil
+    }
+    return pairs
 }
 
 // MARK: - UndoHistoryManager
@@ -107,20 +144,30 @@ class UndoHistoryManager: ObservableObject {
 
     /// Restore selected records from history
     func restoreRecords(_ records: [UndoHistoryRecord]) async throws {
-        for record in records {
-            // Validate bundle folder still exists
-            guard FileManager.default.fileExists(atPath: record.bundleFolderPath) else {
-                printOS("⚠️ Skipping restore for \(record.appName) - bundle folder no longer exists")
-                continue
-            }
+        let trashRoot = URL(fileURLWithPath: NSHomeDirectory())
+            .appendingPathComponent(".Trash", isDirectory: true)
+            .standardizedFileURL
 
-            // Build file pairs from stored paths
-            let filePairs: [(trashURL: URL, originalURL: URL)] = record.filePairs.map {
-                (trashURL: URL(fileURLWithPath: $0.trashed), originalURL: URL(fileURLWithPath: $0.original))
+        for record in records {
+            guard let filePairs = validatedUndoHistoryRestorePairs(
+                record,
+                trashRoot: trashRoot
+            ) else {
+                throw NSError(
+                    domain: "UndoHistoryManager",
+                    code: -2,
+                    userInfo: [
+                        NSLocalizedDescriptionKey:
+                            "The saved restore record for \(record.appName) is invalid."
+                    ]
+                )
             }
 
             // Restore using FileManagerUndo (runs synchronously via semaphore)
-            let success = FileManagerUndo.shared.restoreFiles(filePairs: filePairs)
+            let success = FileManagerUndo.shared.restoreFiles(
+                filePairs: filePairs,
+                trashRoot: trashRoot
+            )
 
             if !success {
                 printOS("⚠️ Failed to restore files for \(record.appName)")
@@ -147,9 +194,12 @@ class UndoHistoryManager: ObservableObject {
     /// Remove stale entries where bundle folder no longer exists in trash
     func cleanupStaleEntries() {
         let initialCount = history.count
+        let trashRoot = URL(fileURLWithPath: NSHomeDirectory())
+            .appendingPathComponent(".Trash", isDirectory: true)
+            .standardizedFileURL
 
         history.removeAll { record in
-            !FileManager.default.fileExists(atPath: record.bundleFolderPath)
+            validatedUndoHistoryRestorePairs(record, trashRoot: trashRoot) == nil
         }
 
         if history.count < initialCount {
@@ -159,7 +209,10 @@ class UndoHistoryManager: ObservableObject {
 
     /// Check if a record's files still exist in trash
     func isRecordValid(_ record: UndoHistoryRecord) -> Bool {
-        return FileManager.default.fileExists(atPath: record.bundleFolderPath)
+        let trashRoot = URL(fileURLWithPath: NSHomeDirectory())
+            .appendingPathComponent(".Trash", isDirectory: true)
+            .standardizedFileURL
+        return validatedUndoHistoryRestorePairs(record, trashRoot: trashRoot) != nil
     }
 
     // MARK: - Persistence

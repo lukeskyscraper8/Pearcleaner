@@ -4,10 +4,133 @@
 //
 //  Created by Alin Lupascu on 10/13/25.
 //
+//  Modified for the independently maintained Pearcleaner fork.
 
 import Foundation
 import SwiftUI
 import AlinFoundation
+
+enum UpdaterStateLogic {
+    typealias IgnoredAppsStore = [String: [String: String?]]
+
+    struct EntryIdentity: Hashable {
+        let bundleIdentifier: String
+        let source: UpdateSource
+
+        init(bundleIdentifier: String, source: UpdateSource) {
+            self.bundleIdentifier = bundleIdentifier
+            self.source = source
+        }
+
+        init(app: UpdateableApp) {
+            self.init(bundleIdentifier: app.uniqueIdentifier, source: app.source)
+        }
+    }
+
+    struct BatchSelectionCandidate: Equatable {
+        let physicalAppIdentity: String
+        let source: UpdateSource
+    }
+
+    enum SparkleCompletionDisposition: Equatable {
+        case installed
+        case noUpdate
+        case failed
+    }
+
+    enum IgnoreState: Equatable {
+        case notIgnored
+        case permanentlyIgnored
+        case skippedVersion(String)
+    }
+
+    static func sparkleCompletionDisposition(
+        success: Bool,
+        hasError: Bool
+    ) -> SparkleCompletionDisposition {
+        if success {
+            return hasError ? .noUpdate : .installed
+        }
+        return .failed
+    }
+
+    static func storingIgnore(
+        in store: IgnoredAppsStore,
+        bundleIdentifier: String,
+        source: UpdateSource,
+        version: String?
+    ) -> IgnoredAppsStore {
+        var result = store
+        var sourceVersions = result[bundleIdentifier] ?? [:]
+
+        // Dictionary subscripts use nil to remove a key. Wrap the optional so
+        // a permanent ignore is stored as an explicit JSON null instead.
+        sourceVersions[source.rawValue] = .some(version)
+        result[bundleIdentifier] = sourceVersions
+        return result
+    }
+
+    static func ignoreState(
+        in store: IgnoredAppsStore,
+        bundleIdentifier: String,
+        source: UpdateSource
+    ) -> IgnoreState {
+        switch store[bundleIdentifier]?[source.rawValue] {
+        case .none:
+            return .notIgnored
+        case .some(.none):
+            return .permanentlyIgnored
+        case .some(.some(let version)):
+            return .skippedVersion(version)
+        }
+    }
+
+    static func canInferCurrent(
+        isAppStore: Bool,
+        hasHomebrew: Bool,
+        hasSparkle: Bool,
+        checkedSources: Set<UpdateSource>,
+        ignoredSources: Set<UpdateSource>,
+        hasKnownUpdate: Bool
+    ) -> Bool {
+        guard !hasKnownUpdate else { return false }
+
+        var supportedSources = Set<UpdateSource>()
+        if isAppStore { supportedSources.insert(.appStore) }
+        if hasHomebrew { supportedSources.insert(.homebrew) }
+        if hasSparkle { supportedSources.insert(.sparkle) }
+
+        guard !supportedSources.isEmpty,
+              supportedSources.isSubset(of: checkedSources),
+              supportedSources.isDisjoint(with: ignoredSources) else {
+            return false
+        }
+        return true
+    }
+
+    static func physicalAppIdentity(for url: URL) -> String {
+        url.resolvingSymlinksInPath().standardizedFileURL.path
+    }
+
+    static func unambiguousBatchAppIdentities(
+        _ candidates: [BatchSelectionCandidate]
+    ) -> Set<String> {
+        let grouped = Dictionary(
+            grouping: candidates,
+            by: \.physicalAppIdentity
+        )
+        return Set(
+            grouped.compactMap { identity, entries in
+                entries.count == 1 ? identity : nil
+            }
+        )
+    }
+
+    static func batchProgress(completed: Int, total: Int) -> Double {
+        guard total > 0 else { return 0 }
+        return min(1, max(0, Double(completed) / Double(total)))
+    }
+}
 
 @MainActor
 class UpdateManager: ObservableObject {
@@ -23,6 +146,7 @@ class UpdateManager: ObservableObject {
     // Batch update tracking
     @Published var isUpdatingAll: Bool = false
     @Published var totalAppsToUpdate: Int = 0
+    @Published private var completedBatchApps: Int = 0
 
     // Consolidated settings (2 Data properties total)
     @AppStorage("settings.updater.sources") private var sourcesData: Data = UpdaterSourcesSettings.defaultEncoded()
@@ -161,26 +285,15 @@ class UpdateManager: ObservableObject {
 
     /// Progress of batch update (0.0 to 1.0)
     var updateAllProgress: Double {
-        guard totalAppsToUpdate > 0 else { return 0 }
-        let remaining = updatesBySource
-            .filter { $0.key != .unsupported && $0.key != .current }
-            .values
-            .flatMap { $0 }
-            .filter { $0.isSelectedForUpdate }
-            .count
-        return Double(totalAppsToUpdate - remaining) / Double(totalAppsToUpdate)
+        UpdaterStateLogic.batchProgress(
+            completed: completedBatchApps,
+            total: totalAppsToUpdate
+        )
     }
 
     /// Number of completed apps in batch update
     var completedAppsCount: Int {
-        guard totalAppsToUpdate > 0 else { return 0 }
-        let remaining = updatesBySource
-            .filter { $0.key != .unsupported && $0.key != .current }
-            .values
-            .flatMap { $0 }
-            .filter { $0.isSelectedForUpdate }
-            .count
-        return totalAppsToUpdate - remaining
+        completedBatchApps
     }
 
     /// Computed property for easy access to hidden apps mapping (bundleID -> source)
@@ -201,7 +314,7 @@ class UpdateManager: ObservableObject {
 
     /// Unified ignored apps storage: bundleID -> [source -> version?]
     /// nil version = permanently ignored, string version = skip until newer version
-    private var ignoredApps: [String: [String: String?]] {
+    private var ignoredApps: UpdaterStateLogic.IgnoredAppsStore {
         get {
             guard let decoded = try? JSONDecoder().decode([String: [String: String?]].self, from: ignoredAppsData) else {
                 return [:]
@@ -213,6 +326,60 @@ class UpdateManager: ObservableObject {
         }
     }
 
+    private func isPermanentlyIgnored(bundleID: String, source: UpdateSource) -> Bool {
+        UpdaterStateLogic.ignoreState(
+            in: ignoredApps,
+            bundleIdentifier: bundleID,
+            source: source
+        ) == .permanentlyIgnored
+    }
+
+    private func versionsMatch(_ lhs: String, _ rhs: String) -> Bool {
+        let left = Version(versionNumber: lhs, buildNumber: nil)
+        let right = Version(versionNumber: rhs, buildNumber: nil)
+        if !left.isEmpty, !right.isEmpty {
+            return left == right
+        }
+        return lhs == rhs
+    }
+
+    private func hiddenIdentity(for app: UpdateableApp) -> UpdaterStateLogic.EntryIdentity {
+        UpdaterStateLogic.EntryIdentity(app: app)
+    }
+
+    private func upsertHiddenUpdate(_ app: UpdateableApp) {
+        let identity = hiddenIdentity(for: app)
+        if let index = hiddenUpdates.firstIndex(where: {
+            hiddenIdentity(for: $0) == identity
+        }) {
+            hiddenUpdates[index] = app
+        } else {
+            hiddenUpdates.append(app)
+        }
+    }
+
+    /// The legacy store can represent only one source per bundle. Keep it
+    /// aligned with any remaining permanent ignore so downgrades retain the
+    /// safest available state without affecting the multi-source store.
+    private func syncLegacyHiddenApp(
+        bundleID: String,
+        ignored: [String: [String: String?]]
+    ) {
+        let permanentSources = ignored[bundleID, default: [:]].compactMap {
+            sourceRawValue, ignoredVersion -> UpdateSource? in
+            guard ignoredVersion == nil else { return nil }
+            return UpdateSource(rawValue: sourceRawValue)
+        }.sorted { $0.rawValue < $1.rawValue }
+
+        var hidden = hiddenApps
+        if let source = permanentSources.first {
+            hidden[bundleID] = source
+        } else {
+            hidden.removeValue(forKey: bundleID)
+        }
+        hiddenApps = hidden
+    }
+
     /// Migrate old hiddenApps data to new ignoredApps format (one-time migration)
     private func migrateHiddenAppsIfNeeded() {
         // Only migrate if old data exists and new data is empty
@@ -221,7 +388,12 @@ class UpdateManager: ObservableObject {
         var migrated: [String: [String: String?]] = [:]
         for (bundleID, source) in hiddenApps {
             // Convert to new format with nil version (permanent ignore)
-            migrated[bundleID] = [source.rawValue: nil]
+            migrated = UpdaterStateLogic.storingIgnore(
+                in: migrated,
+                bundleIdentifier: bundleID,
+                source: source,
+                version: nil
+            )
         }
 
         ignoredApps = migrated
@@ -257,28 +429,21 @@ class UpdateManager: ObservableObject {
     ///   - skipVersion: Optional version to skip. If nil, app is permanently ignored. If provided, only that version is skipped.
     func hideApp(_ app: UpdateableApp, skipVersion: String? = nil) {
         // Add to new unified ignored apps storage
-        var ignored = ignoredApps
-        if ignored[app.uniqueIdentifier] == nil {
-            ignored[app.uniqueIdentifier] = [:]
-        }
-        ignored[app.uniqueIdentifier]?[app.source.rawValue] = skipVersion
+        let ignored = UpdaterStateLogic.storingIgnore(
+            in: ignoredApps,
+            bundleIdentifier: app.uniqueIdentifier,
+            source: app.source,
+            version: skipVersion
+        )
 
         ignoredApps = ignored
-
-        // Also update old storage for backward compatibility
-        if skipVersion == nil {
-            var hidden = hiddenApps
-            hidden[app.uniqueIdentifier] = app.source
-            hiddenApps = hidden
-        }
+        syncLegacyHiddenApp(bundleID: app.uniqueIdentifier, ignored: ignored)
 
         // Immediately remove from visible lists for instant UI feedback
         updatesBySource[app.source]?.removeAll { $0.uniqueIdentifier == app.uniqueIdentifier }
 
         // Add to hidden list for sidebar display
-        if !hiddenUpdates.contains(where: { $0.uniqueIdentifier == app.uniqueIdentifier }) {
-            hiddenUpdates.append(app)
-        }
+        upsertHiddenUpdate(app)
     }
 
     /// Rescan a single app to get fresh update data
@@ -329,13 +494,12 @@ class UpdateManager: ObservableObject {
         }
         ignoredApps = ignored
 
-        // Also remove from old storage for backward compatibility
-        var hidden = hiddenApps
-        hidden.removeValue(forKey: app.uniqueIdentifier)
-        hiddenApps = hidden
+        // Keep a remaining permanent ignore represented in the legacy store.
+        syncLegacyHiddenApp(bundleID: app.uniqueIdentifier, ignored: ignored)
 
-        // Immediately remove from hidden list for instant UI feedback
-        hiddenUpdates.removeAll { $0.uniqueIdentifier == app.uniqueIdentifier }
+        // Immediately remove only this source's hidden entry.
+        let identity = hiddenIdentity(for: app)
+        hiddenUpdates.removeAll { hiddenIdentity(for: $0) == identity }
 
         // Rescan the app to get fresh update data
         if let refreshedApp = await recheckUpdate(for: app) {
@@ -380,7 +544,9 @@ class UpdateManager: ObservableObject {
             for source in sources {
                 updatesBySource[source] = nil
             }
-            // Don't clear hiddenUpdates - will be rebuilt at end
+            // Clear only entries owned by rescanned sources. Unscanned source
+            // state remains visible until it is independently refreshed.
+            hiddenUpdates.removeAll { sourcesToScan.contains($0.source) }
         } else {
             // Full scan - scan all enabled sources (current behavior)
             sourcesToScan = []
@@ -416,14 +582,12 @@ class UpdateManager: ObservableObject {
         // Use apps from AppState (either freshly loaded or existing)
         let apps = AppState.shared.sortedApps
 
-        // Filter out ignored apps BEFORE checking for updates
-        // This prevents wasting time on HEAD requests and SPUUpdater calls for ignored apps
-        let ignoredAppIds = Set(ignoredApps.keys)
-        let visibleApps = apps.filter { !ignoredAppIds.contains($0.bundleIdentifier) }
-
         // Launch concurrent scans with progressive updates
         await withTaskGroup(of: (UpdateSource, [UpdateableApp]).self) { group in
             if sourcesToScan.contains(.homebrew) {
+                let visibleApps = apps.filter {
+                    !isPermanentlyIgnored(bundleID: $0.bundleIdentifier, source: .homebrew)
+                }
                 group.addTask {
                     let results = await HomebrewUpdateChecker.checkForUpdates(apps: visibleApps, includeFormulae: false, showAutoUpdatesInHomebrew: self.showAutoUpdatesInHomebrew)
                     return (.homebrew, results)
@@ -431,6 +595,9 @@ class UpdateManager: ObservableObject {
             }
 
             if sourcesToScan.contains(.appStore) {
+                let visibleApps = apps.filter {
+                    !isPermanentlyIgnored(bundleID: $0.bundleIdentifier, source: .appStore)
+                }
                 group.addTask {
                     // Use pre-categorized flag (instant check vs expensive receipt verification)
                     let appStoreApps = visibleApps.filter { $0.isAppStore }
@@ -440,6 +607,9 @@ class UpdateManager: ObservableObject {
             }
 
             if sourcesToScan.contains(.sparkle) {
+                let visibleApps = apps.filter {
+                    !isPermanentlyIgnored(bundleID: $0.bundleIdentifier, source: .sparkle)
+                }
                 group.addTask {
                     // Show all apps with Sparkle, regardless of other update sources
                     // This allows users to see version differences across App Store/Homebrew/Sparkle
@@ -528,14 +698,57 @@ class UpdateManager: ObservableObject {
 
         await processSourceResults(source: .unsupported, apps: unsupportedApps)
 
+        // Infer "Current" only when every update mechanism supported by the
+        // app was checked in this scan. A disabled/unchecked or permanently
+        // ignored source is unknown, not evidence that the app is current.
+        let knownUpdatePaths = Set(
+            updatesBySource
+                .filter {
+                    $0.key == .homebrew ||
+                    $0.key == .appStore ||
+                    $0.key == .sparkle
+                }
+                .values
+                .flatMap { $0 }
+                .map {
+                    UpdaterStateLogic.physicalAppIdentity(
+                        for: $0.appInfo.path
+                    )
+                }
+        ).union(
+            hiddenUpdates.map {
+                UpdaterStateLogic.physicalAppIdentity(
+                    for: $0.appInfo.path
+                )
+            }
+        )
+        let ignored = ignoredApps
+
         // Calculate current apps (supported but up-to-date - no updates available)
         let currentApps = apps.filter { app in
+            let permanentlyIgnoredSources = Set(
+                UpdateSource.allCases.filter { source in
+                    UpdaterStateLogic.ignoreState(
+                        in: ignored,
+                        bundleIdentifier: app.bundleIdentifier,
+                        source: source
+                    ) == .permanentlyIgnored
+                }
+            )
+            let appIdentity = UpdaterStateLogic.physicalAppIdentity(
+                for: app.path
+            )
+
             // Not a web app
-            !app.webApp &&
-            // Must be supported (App Store, Homebrew, or Sparkle)
-            (app.isAppStore || app.cask != nil || app.hasSparkle) &&
-            // But doesn't have an update available in any of the update sources
-            !updatesBySource.values.flatMap { $0 }.contains(where: { $0.appInfo.path == app.path })
+            return !app.webApp &&
+                UpdaterStateLogic.canInferCurrent(
+                    isAppStore: app.isAppStore,
+                    hasHomebrew: app.cask != nil,
+                    hasSparkle: app.hasSparkle,
+                    checkedSources: sourcesToScan,
+                    ignoredSources: permanentlyIgnoredSources,
+                    hasKnownUpdate: knownUpdatePaths.contains(appIdentity)
+                )
         }.map { app in
             // Create UpdateableApp with current source
             UpdateableApp(
@@ -581,50 +794,93 @@ class UpdateManager: ObservableObject {
     /// Rebuild hidden apps list from storage for display in sidebar
     /// This populates hiddenUpdates with ALL hidden apps (even those without updates)
     private func rebuildHiddenAppsList(allApps: [AppInfo]) async {
-        let hidden = hiddenApps
+        var ignored = ignoredApps
+        var legacyHidden = hiddenApps
 
-        // For each hidden app in storage, create an UpdateableApp for display
-        for (bundleID, source) in hidden {
-            // Skip if already in hiddenUpdates (was found during update check)
-            if hiddenUpdates.contains(where: { $0.uniqueIdentifier == bundleID }) {
-                continue
-            }
-
-            // Find the app in sortedApps
+        // The unified store can contain independent entries for multiple
+        // sources. Only permanent ignores need synthetic rows; version skips
+        // are added by processSourceResults when that exact version is found.
+        for (bundleID, ignoredSources) in Array(ignored) {
             guard let appInfo = allApps.first(where: { $0.bundleIdentifier == bundleID }) else {
-                // App no longer exists, remove from hidden storage
-                var mutableHidden = hidden
-                mutableHidden.removeValue(forKey: bundleID)
-                hiddenApps = mutableHidden
+                // App no longer exists, remove all persisted and in-memory
+                // entries for this bundle.
+                ignored.removeValue(forKey: bundleID)
+                legacyHidden.removeValue(forKey: bundleID)
+                hiddenUpdates.removeAll { $0.uniqueIdentifier == bundleID }
                 continue
             }
 
-            // Create UpdateableApp without update info (just for display)
-            let updateableApp = UpdateableApp(
-                appInfo: appInfo,
-                availableVersion: nil,
-                availableBuildNumber: nil,
-                source: source,
-                adamID: nil,
-                appStoreURL: nil,
-                status: .idle,
-                progress: 0.0,
-                isSelectedForUpdate: false,
-                releaseTitle: nil,
-                releaseDescription: nil,
-                releaseNotesLink: nil,
-                releaseDate: nil,
-                isPreRelease: false,
-                isIOSApp: false,
-                foundInRegion: nil,
-                appcastItem: nil
-            )
+            for (sourceRawValue, ignoredVersion) in ignoredSources {
+                guard ignoredVersion == nil,
+                      let source = UpdateSource(rawValue: sourceRawValue) else {
+                    continue
+                }
 
-            hiddenUpdates.append(updateableApp)
+                let identity = UpdaterStateLogic.EntryIdentity(
+                    bundleIdentifier: bundleID,
+                    source: source
+                )
+                guard !hiddenUpdates.contains(where: {
+                    hiddenIdentity(for: $0) == identity
+                }) else {
+                    continue
+                }
+
+                upsertHiddenUpdate(
+                    UpdateableApp(
+                        appInfo: appInfo,
+                        availableVersion: nil,
+                        availableBuildNumber: nil,
+                        source: source,
+                        adamID: nil,
+                        appStoreURL: nil,
+                        status: .idle,
+                        progress: 0.0,
+                        isSelectedForUpdate: false,
+                        releaseTitle: nil,
+                        releaseDescription: nil,
+                        releaseNotesLink: nil,
+                        releaseDate: nil,
+                        isPreRelease: false,
+                        isIOSApp: false,
+                        foundInRegion: nil,
+                        appcastItem: nil
+                    )
+                )
+            }
+        }
+
+        if ignored != ignoredApps {
+            ignoredApps = ignored
+        }
+        if legacyHidden != hiddenApps {
+            hiddenApps = legacyHidden
+        }
+
+        var deduplicated: [UpdaterStateLogic.EntryIdentity: UpdateableApp] = [:]
+        for app in hiddenUpdates {
+            let identity = hiddenIdentity(for: app)
+            if let existing = deduplicated[identity],
+               existing.availableVersion != nil || app.availableVersion == nil {
+                continue
+            }
+            deduplicated[identity] = app
+        }
+        hiddenUpdates = Array(deduplicated.values)
+        hiddenUpdates.sort {
+            let order = $0.appInfo.appName.sortKey.compare($1.appInfo.appName.sortKey)
+            if order == .orderedSame {
+                return $0.source.rawValue < $1.source.rawValue
+            }
+            return order == .orderedAscending
         }
     }
 
     private func processSourceResults(source: UpdateSource, apps: [UpdateableApp]) async {
+        // A source result is authoritative for that source. Drop its previous
+        // hidden rows before rebuilding them from the current response.
+        hiddenUpdates.removeAll { $0.source == source }
+
         // Sort alphabetically
         let sortedApps = apps.sorted { $0.appInfo.appName.sortKey < $1.appInfo.appName.sortKey }
 
@@ -644,7 +900,8 @@ class UpdateManager: ObservableObject {
 
             // If ignoredVersion matches availableVersion, skip this version
             if let availableVersion = app.availableVersion,
-               availableVersion == ignoredVersion {
+               let ignoredVersion,
+               versionsMatch(availableVersion, ignoredVersion) {
                 return false
             }
 
@@ -656,7 +913,9 @@ class UpdateManager: ObservableObject {
                   let ignoredVersion = ignoredVersions[source.rawValue] else {
                 return false
             }
-            return ignoredVersion == nil || app.availableVersion == ignoredVersion
+            guard let ignoredVersion else { return true }
+            guard let availableVersion = app.availableVersion else { return false }
+            return versionsMatch(availableVersion, ignoredVersion)
         }
 
         // Update results (set to empty array even if no visible results to indicate "completed")
@@ -664,9 +923,7 @@ class UpdateManager: ObservableObject {
 
         // Add hidden apps to hidden list
         for app in hiddenAppsFromSource {
-            if !hiddenUpdates.contains(where: { $0.uniqueIdentifier == app.uniqueIdentifier }) {
-                hiddenUpdates.append(app)
-            }
+            upsertHiddenUpdate(app)
         }
 
         // Mark source as no longer scanning
@@ -708,7 +965,7 @@ class UpdateManager: ObservableObject {
 
                 // Perform upgrade
                 do {
-                    try await HomebrewController.shared.upgradePackage(name: cask)
+                    try await HomebrewController.shared.upgradePackage(name: cask, cask: true)
 
                     GlobalConsoleManager.shared.appendOutput("✓ Successfully updated \(app.appInfo.appName) to version \(app.availableVersion ?? "unknown")\n", source: CurrentPage.updater.title)
 
@@ -829,13 +1086,26 @@ class UpdateManager: ObservableObject {
                 completionCallback: { [weak self] success, error in
                     guard let self = self else { return }
                     Task { @MainActor in
-                        if success {
+                        switch UpdaterStateLogic.sparkleCompletionDisposition(
+                            success: success,
+                            hasError: error != nil
+                        ) {
+                        case .noUpdate:
+                            let message = error?.localizedDescription ?? "No update available"
+                            UpdaterDebugLogger.shared.log(.sparkle, "═══ No update installed for \(app.appInfo.appName): \(message)")
+                            // The earlier check produced a stale row. The
+                            // terminal Sparkle result disproves it, but did not
+                            // install anything, so remove only that row.
+                            await self.removeFromUpdatesList(appID: app.id, source: .sparkle)
+
+                        case .installed:
                             UpdaterDebugLogger.shared.log(.sparkle, "═══ Update completed successfully for \(app.appInfo.appName)")
                             GlobalConsoleManager.shared.appendOutput("✓ Successfully updated \(app.appInfo.appName) via Sparkle\n", source: CurrentPage.updater.title)
                             // Update completed - remove from list and refresh (only flush updated app's bundle)
                             await self.removeFromUpdatesList(appID: app.id, source: .sparkle)
                             await self.refreshApps(updatedApp: app.appInfo)
-                        } else {
+
+                        case .failed:
                             // Update failed - show error
                             let message = error?.localizedDescription ?? "Unknown error"
                             UpdaterDebugLogger.shared.log(.sparkle, "═══ Update failed for \(app.appInfo.appName): \(message)")
@@ -930,8 +1200,30 @@ class UpdateManager: ObservableObject {
     func updateAll(source: UpdateSource) async {
         guard let apps = updatesBySource[source] else { return }
 
-        // Only update apps that are selected for update
-        let selectedApps = apps.filter { $0.isSelectedForUpdate }
+        let candidates = apps
+            .filter { $0.isSelectedForUpdate }
+            .map {
+                (
+                    app: $0,
+                    identity: UpdaterStateLogic.physicalAppIdentity(
+                        for: $0.appInfo.path
+                    )
+                )
+            }
+        let permittedIdentities =
+            UpdaterStateLogic.unambiguousBatchAppIdentities(
+                candidates.map {
+                    UpdaterStateLogic.BatchSelectionCandidate(
+                        physicalAppIdentity: $0.identity,
+                        source: $0.app.source
+                    )
+                }
+            )
+        let selectedApps = candidates.compactMap {
+            permittedIdentities.contains($0.identity) && !$0.app.isIOSApp
+                ? $0.app
+                : nil
+        }
 
         GlobalConsoleManager.shared.appendOutput("Starting batch update for \(selectedApps.count) app(s) from \(source.rawValue)...\n", source: CurrentPage.updater.title)
 
@@ -939,46 +1231,98 @@ class UpdateManager: ObservableObject {
             await updateApp(app)
         }
 
-        GlobalConsoleManager.shared.appendOutput("Batch update completed for \(source.rawValue)\n", source: CurrentPage.updater.title)
+        let attemptedIDs = Set(selectedApps.map(\.id))
+        let failedCount = (updatesBySource[source] ?? []).filter { app in
+            guard attemptedIDs.contains(app.id) else { return false }
+            if case .failed = app.status { return true }
+            return false
+        }.count
+        GlobalConsoleManager.shared.appendOutput(
+            "Finished starting \(selectedApps.count) \(source.rawValue) update attempt(s); \(failedCount) reported failure.\n",
+            source: CurrentPage.updater.title
+        )
     }
 
-    /// Update all selected apps across all sources (concurrent per-source)
+    /// Update selected physical apps once, in deterministic source order.
     func updateSelectedApps() async {
-        // Count total selected apps across updateable sources only (exclude .current and .unsupported)
-        let totalSelected = updatesBySource
-            .filter { $0.key != .unsupported && $0.key != .current }
-            .values
-            .flatMap { $0 }
-            .filter { $0.isSelectedForUpdate }
-            .count
+        var candidates: [(app: UpdateableApp, identity: String)] = []
+
+        for source in UpdateSource.allCases
+        where source != .unsupported && source != .current {
+            for app in updatesBySource[source] ?? []
+            where app.isSelectedForUpdate {
+                let identity = UpdaterStateLogic.physicalAppIdentity(
+                    for: app.appInfo.path
+                )
+                candidates.append((app, identity))
+            }
+        }
+
+        let permittedIdentities =
+            UpdaterStateLogic.unambiguousBatchAppIdentities(
+                candidates.map {
+                    UpdaterStateLogic.BatchSelectionCandidate(
+                        physicalAppIdentity: $0.identity,
+                        source: $0.app.source
+                    )
+                }
+            )
+        let ambiguousCandidates = candidates.filter {
+            !permittedIdentities.contains($0.identity)
+        }
+        let selectedApps = candidates.compactMap {
+            permittedIdentities.contains($0.identity) && !$0.app.isIOSApp
+                ? $0.app
+                : nil
+        }
+        for identity in Set(ambiguousCandidates.map { $0.identity }) {
+            let matching = ambiguousCandidates.filter {
+                $0.identity == identity
+            }
+            let appName = matching.first?.app.appInfo.appName ?? identity
+            let sourceNames = Set(matching.map { $0.app.source.rawValue })
+                .sorted()
+                .joined(separator: ", ")
+            GlobalConsoleManager.shared.appendOutput(
+                "Skipped \(appName): select only one update source (\(sourceNames)).\n",
+                source: CurrentPage.updater.title
+            )
+        }
+
+        let totalSelected = selectedApps.count
         totalAppsToUpdate = totalSelected
+        completedBatchApps = 0
         isUpdatingAll = true
 
         defer {
             isUpdatingAll = false
             totalAppsToUpdate = 0
+            completedBatchApps = 0
         }
 
         GlobalConsoleManager.shared.appendOutput("Starting updates for \(totalSelected) selected app(s) across all sources...\n", source: CurrentPage.updater.title)
 
-        await withTaskGroup(of: Void.self) { group in
-            // Process each source's updates concurrently in separate Tasks
-            for source in UpdateSource.allCases {
-                if let apps = updatesBySource[source] {
-                    let selectedApps = apps.filter { $0.isSelectedForUpdate }
-                    if !selectedApps.isEmpty {
-                        group.addTask {
-                            // Within each source, process apps sequentially
-                            for app in selectedApps {
-                                await self.updateApp(app)
-                            }
-                        }
-                    }
-                }
-            }
+        // Source installers can replace the same bundle and refresh shared app
+        // state. Serialize the deduplicated work so a stale result from one
+        // source cannot overwrite another source's freshly installed app.
+        for app in selectedApps {
+            await updateApp(app)
+            completedBatchApps += 1
         }
 
-        GlobalConsoleManager.shared.appendOutput("All selected updates completed\n", source: CurrentPage.updater.title)
+        let attemptedIDs = Set(selectedApps.map(\.id))
+        let failedCount = updatesBySource.values
+            .flatMap { $0 }
+            .filter { app in
+                guard attemptedIDs.contains(app.id) else { return false }
+                if case .failed = app.status { return true }
+                return false
+            }
+            .count
+        GlobalConsoleManager.shared.appendOutput(
+            "Finished starting \(totalSelected) selected update attempt(s); \(failedCount) reported failure.\n",
+            source: CurrentPage.updater.title
+        )
     }
 
     /// Update the status and progress of an app in the updates list

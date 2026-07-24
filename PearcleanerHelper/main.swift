@@ -3,6 +3,7 @@
 //  PearcleanerHelper
 //
 //  Created by Alin Lupascu on 3/14/25.
+//  Modified for the independently maintained Pearcleaner fork.
 //
 
 import Foundation
@@ -50,18 +51,61 @@ class HelperToolDelegate: NSObject, NSXPCListenerDelegate, HelperToolProtocol {
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/bin/bash")
         process.arguments = ["-c", command]
-        let pipe = Pipe()
-        process.standardOutput = pipe
-        process.standardError = pipe
+        let outputPipe = Pipe()
+        let errorPipe = Pipe()
+        process.standardOutput = outputPipe
+        process.standardError = errorPipe
+
+        let outputLimit = 1_048_576
+        let outputLock = NSLock()
+        var capturedOutput = Data()
+        var outputWasTruncated = false
+
+        func drain(_ pipe: Pipe, group: DispatchGroup) {
+            group.enter()
+            DispatchQueue.global(qos: .utility).async {
+                let handle = pipe.fileHandleForReading
+                while true {
+                    let data = handle.availableData
+                    if data.isEmpty {
+                        break
+                    }
+
+                    outputLock.lock()
+                    let remainingCapacity = max(0, outputLimit - capturedOutput.count)
+                    if remainingCapacity > 0 {
+                        capturedOutput.append(data.prefix(remainingCapacity))
+                    }
+                    if data.count > remainingCapacity {
+                        outputWasTruncated = true
+                    }
+                    outputLock.unlock()
+                }
+                group.leave()
+            }
+        }
+
+        let drainGroup = DispatchGroup()
         do {
             try process.run()
+            drain(outputPipe, group: drainGroup)
+            drain(errorPipe, group: drainGroup)
             process.waitUntilExit()
+            drainGroup.wait()
         } catch {
             reply(false, "Failed to run command: \(error.localizedDescription)")
             return
         }
-        let data = pipe.fileHandleForReading.readDataToEndOfFile()
-        let output = String(data: data, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+
+        outputLock.lock()
+        let data = capturedOutput
+        let wasTruncated = outputWasTruncated
+        outputLock.unlock()
+
+        var output = String(data: data, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        if wasTruncated {
+            output += output.isEmpty ? "[Output truncated]" : "\n[Output truncated]"
+        }
         let success = (process.terminationStatus == 0) // Check if process exited successfully
         reply(success, output.isEmpty ? "No output" : output)
     }

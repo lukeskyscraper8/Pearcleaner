@@ -3,6 +3,7 @@
 //  Pearcleaner
 //
 //  Created by Alin Lupascu on 7/31/25.
+//  Modified for the independently maintained Pearcleaner fork.
 //
 
 import Foundation
@@ -242,6 +243,7 @@ struct ExtraOptions: View {
     @State private var availableLanguages: [LanguageInfo] = []
     @State private var selectedLanguagesToRemove: Set<String> = []
     @State private var isLoadingLanguages: Bool = false
+    @State private var languageSheetAppURL: URL?
 
     // Homebrew adoption state
     @State private var showAdoptionSheet: Bool = false
@@ -280,13 +282,71 @@ struct ExtraOptions: View {
 
                 if appState.appInfo.arch == .universal {
                     Button("Lipo Architectures") {
+                        let app = appState.appInfo
                         let title = NSLocalizedString("App Lipo", comment: "Lipo alert title")
-                        let message = String(format: NSLocalizedString("Pearcleaner will strip the %@ architecture from %@'s executable file to save space. Would you like to proceed?", comment: "Lipo alert message"), isOSArm() ? "intel" : "arm64", appState.appInfo.appName)
+                        let message = String(format: NSLocalizedString("Pearcleaner will strip the %@ architecture from %@'s executable file to save space. Would you like to proceed?", comment: "Lipo alert message"), isOSArm() ? "intel" : "arm64", app.appName)
                         showCustomAlert(title: title, message: message, style: .informational, onOk: {
                             Task {
-                                // Kill app if running before lipo'ing to prevent corruption
-                                await killApp(appId: appState.appInfo.bundleIdentifier)
-                                let _ = thinAppBundleArchitecture(at: appState.appInfo.path, of: appState.appInfo.arch)
+                                let eligibility = AppBundleMutationSafety.inspect(
+                                    app.path
+                                )
+                                guard eligibility.allowsMutation else {
+                                    await MainActor.run {
+                                        showCustomAlert(
+                                            title: "Lipo Skipped",
+                                            message: eligibility.userFacingReason,
+                                            style: .warning
+                                        )
+                                    }
+                                    return
+                                }
+
+                                guard await terminateAppForMutation(
+                                    bundleIdentifier: app.bundleIdentifier
+                                ) else {
+                                    await MainActor.run {
+                                        showCustomAlert(
+                                            title: "Lipo Failed",
+                                            message:
+                                                "\(app.appName) did not terminate, so no files were modified.",
+                                            style: .critical
+                                        )
+                                    }
+                                    return
+                                }
+
+                                let outcome = thinAppBundleArchitectureOutcome(
+                                    at: app.path,
+                                    of: app.arch
+                                )
+                                switch outcome {
+                                case .succeeded:
+                                    break
+                                case .partiallySucceeded(_, let message):
+                                    await MainActor.run {
+                                        showCustomAlert(
+                                            title: "Lipo Partially Completed",
+                                            message: message,
+                                            style: .warning
+                                        )
+                                    }
+                                case .blocked(let eligibility):
+                                    await MainActor.run {
+                                        showCustomAlert(
+                                            title: "Lipo Skipped",
+                                            message: eligibility.userFacingReason,
+                                            style: .warning
+                                        )
+                                    }
+                                case .failed(let message):
+                                    await MainActor.run {
+                                        showCustomAlert(
+                                            title: "Lipo Failed",
+                                            message: message,
+                                            style: .critical
+                                        )
+                                    }
+                                }
                             }
                         })
                     }
@@ -294,13 +354,24 @@ struct ExtraOptions: View {
 
                 Menu("Translations") {
                     Button("Auto Prune (Keep macOS Language)") {
+                        let app = appState.appInfo
                         let title = NSLocalizedString("Prune Translations", comment: "Prune alert title")
                         let message = String(format: NSLocalizedString("This will remove all unused language translation files except your macOS language", comment: "Prune alert message"))
                         showCustomAlert(title: title, message: message, style: .warning, onOk: {
                             Task {
                                 do {
-                                    try await pruneLanguages(in: appState.appInfo.path.path, showAlert: true)
+                                    try await pruneLanguages(
+                                        in: app.path.path,
+                                        showAlert: true
+                                    )
                                 } catch {
+                                    await MainActor.run {
+                                        showCustomAlert(
+                                            title: "Prune Skipped",
+                                            message: error.localizedDescription,
+                                            style: .warning
+                                        )
+                                    }
                                     printOS("Translation prune error: \(error)")
                                 }
                             }
@@ -334,6 +405,7 @@ struct ExtraOptions: View {
     // MARK: - Language Selection Sheet
 
     private func showLanguageSelectionSheet() async {
+        let app = appState.appInfo
         guard let parentWindow = NSApp.keyWindow ?? NSApp.windows.first(where: { $0.isVisible }) else {
             return
         }
@@ -343,11 +415,12 @@ struct ExtraOptions: View {
             self.isLoadingLanguages = true
             self.availableLanguages = []
             self.selectedLanguagesToRemove = []
+            self.languageSheetAppURL = app.path
 
             // Create the SwiftUI view with loading state
             let contentView = TranslationSelectionSheet(
-                appName: appState.appInfo.appName,
-                appPath: appState.appInfo.path.path,
+                appName: app.appName,
+                appPath: app.path.path,
                 languages: $availableLanguages,
                 selectedLanguages: $selectedLanguagesToRemove,
                 isLoading: $isLoadingLanguages,
@@ -356,8 +429,9 @@ struct ExtraOptions: View {
                         parentWindow.endSheet(sheetWindow)
                     }
                     self.languageSheetWindow = nil
+                    self.languageSheetAppURL = nil
                     Task {
-                        await performManualPrune()
+                        await performManualPrune(in: app.path)
                     }
                 },
                 onCancel: {
@@ -365,6 +439,7 @@ struct ExtraOptions: View {
                         parentWindow.endSheet(sheetWindow)
                     }
                     self.languageSheetWindow = nil
+                    self.languageSheetAppURL = nil
                 }
             )
 
@@ -388,32 +463,45 @@ struct ExtraOptions: View {
         }
 
         // Load languages in background
-        let languages = await findAvailableLanguages(in: appState.appInfo.path.path)
+        let languages = await findAvailableLanguages(in: app.path.path)
 
         // Update with results
         await MainActor.run {
+            guard self.languageSheetAppURL == app.path else { return }
             self.availableLanguages = languages
             self.isLoadingLanguages = false
         }
     }
 
-    private func performManualPrune() async {
+    private func performManualPrune(in appBundleURL: URL) async {
         // Filter selected languages from available languages by code
         let languagesToRemove = availableLanguages.filter { language in
             selectedLanguagesToRemove.contains(language.code)
         }
 
         do {
-            try await pruneLanguagesManual(languagesToRemove: languagesToRemove)
+            let result = try await pruneLanguagesManual(
+                languagesToRemove: languagesToRemove,
+                in: appBundleURL
+            )
 
-            // Show success message
             await MainActor.run {
-                let removedCount = languagesToRemove.count
+                let removedCount = result.removedLanguageCount
                 let keptCount = availableLanguages.count - removedCount
+                let message: String
+                if result.allSucceeded {
+                    message =
+                        "Successfully removed \(removedCount) language\(removedCount == 1 ? "" : "s"). Kept \(keptCount) language\(keptCount == 1 ? "" : "s")."
+                } else {
+                    message =
+                        "Removed \(removedCount) of \(result.requestedLanguageCount) selected languages. \(result.failedPathCount) translation folder(s) could not be removed."
+                }
                 showCustomAlert(
-                    title: "Translations Pruned",
-                    message: "Successfully removed \(removedCount) language\(removedCount == 1 ? "" : "s"). Kept \(keptCount) language\(keptCount == 1 ? "" : "s").",
-                    style: .informational
+                    title: result.allSucceeded
+                        ? "Translations Pruned"
+                        : "Translations Partially Pruned",
+                    message: message,
+                    style: result.allSucceeded ? .informational : .warning
                 )
             }
         } catch {

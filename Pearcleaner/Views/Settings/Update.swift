@@ -4,6 +4,7 @@
 //
 //  Created by Alin Lupascu on 11/5/23.
 //
+//  Modified for the independently maintained Pearcleaner fork.
 
 
 import SwiftUI
@@ -20,13 +21,13 @@ struct UpdateSettingsTab: View {
 
             // === Frequency ============================================================================================
             PearGroupBox(header: { Text("Update Frequency").foregroundStyle(ThemeColors.shared(for: colorScheme).primaryText).font(.title2) }, content: {
-                FrequencyView(updater: updater)
+                UpdaterFrequencyView(updater: updater)
                     .foregroundStyle(ThemeColors.shared(for: colorScheme).primaryText)
             })
 
             // === Release Notes ========================================================================================
             PearGroupBox(header: { Text("Release Notes").foregroundStyle(ThemeColors.shared(for: colorScheme).primaryText).font(.title2) }, content: {
-                RecentReleasesView(updater: updater)
+                UpdaterRecentReleasesView(updater: updater)
                     .frame(height: 380)
                     .frame(maxWidth: .infinity)
                     .foregroundStyle(ThemeColors.shared(for: colorScheme).primaryText)

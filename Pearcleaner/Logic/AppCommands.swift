@@ -4,6 +4,7 @@
 //
 //  Created by Alin Lupascu on 10/31/23.
 //
+// Modified for the independently maintained Pearcleaner fork.
 
 import SwiftUI
 import AlinFoundation
@@ -82,8 +83,15 @@ struct AppCommands: Commands {
                         // For plugins view, post notification to refresh
                         NotificationCenter.default.post(name: NSNotification.Name("PluginsViewShouldRefresh"), object: nil)
                     } else if appState.currentPage == .fileSearch {
-                        // For file search view, post notification to undo (has unique cache logic)
-                        NotificationCenter.default.post(name: NSNotification.Name("FileSearchViewShouldUndo"), object: nil)
+                        // File Search restores only the cache entry matching the
+                        // paths that were confirmed back at their originals.
+                        NotificationCenter.default.post(
+                            name: NSNotification.Name("FileSearchViewShouldUndo"),
+                            object: nil,
+                            userInfo: [
+                                "restoredPaths": FileManagerUndo.shared.lastRestoredOriginalURLs.map(\.path)
+                            ]
+                        )
                     } else if appState.currentPage == .orphans {
                         // For orphans view, post notification to refresh
                         NotificationCenter.default.post(name: NSNotification.Name("ZombieViewShouldRefresh"), object: nil)

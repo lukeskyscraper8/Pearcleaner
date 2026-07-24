@@ -3,6 +3,7 @@
 //  Pearcleaner
 //
 //  Created by Alin Lupascu on 8/9/25.
+//  Modified for the independently maintained Pearcleaner fork.
 //
 
 import AlinFoundation
@@ -55,9 +56,9 @@ struct LipoDescriptionSection: View {
     @State private var showFullDescription = false
     @Environment(\.colorScheme) var colorScheme
     private let shortDescription =
-        "App lipo targets the Mach-O binaries inside your universal app bundles and removes any unused architectures..."
+        "App lipo removes unused architectures from unsigned universal apps. Signed or uninspectable apps are skipped..."
     private let fullDescription =
-        "App lipo targets the Mach-O binaries inside your universal app bundles and removes any unused architectures, such as x86_64 or arm64, leaving only the architectures your computer actually supports. The list shows only universal type apps, not your full app list. After lipo, the green portion will be removed from your app's binary. It's recommended to open an app at least once before lipo to make sure macOS has cached the signature. Privileged Helper is required to perform this action on certain applications."
+        "App lipo targets Mach-O binaries inside universal app bundles and removes unused architectures such as x86_64 or arm64. Pearcleaner performs this only when the app and its nested code can be verified as unsigned; signed or uninspectable apps are skipped because modification would invalidate their signatures. The list shows universal apps rather than your full app list. Apps that require privileged modification are also skipped."
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {

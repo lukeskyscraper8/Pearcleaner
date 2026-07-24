@@ -580,12 +580,6 @@ struct DaemonView: View {
             parseStatusOutput(userResult.1, into: &statusMap, context: "user")
         }
         
-        // Get system context services (requires sudo for full access)
-        let systemResult = runDirectShellCommand(command: "sudo launchctl list")
-        if systemResult.0 {
-            parseStatusOutput(systemResult.1, into: &statusMap, context: "system")
-        }
-        
         return statusMap
     }
     
@@ -971,20 +965,20 @@ struct LaunchItemRowView: View {
             switch action {
             case "load":
                 if !item.path.isEmpty && item.path != "Not found" {
-                    command = needsSudo ? "sudo launchctl load \(item.path.shellQuoted)" : "launchctl load \(item.path.shellQuoted)"
+                    command = "/bin/launchctl load \(item.path.shellQuoted)"
                 } else {
-                    command = needsSudo ? "sudo launchctl enable \("\(domain)/\(item.label)".shellQuoted)" : "launchctl enable \("\(domain)/\(item.label)".shellQuoted)"
+                    command = "/bin/launchctl enable \("\(domain)/\(item.label)".shellQuoted)"
                 }
             case "unload":
                 if !item.path.isEmpty && item.path != "Not found" {
-                    command = needsSudo ? "sudo launchctl unload \(item.path.shellQuoted)" : "launchctl unload \(item.path.shellQuoted)"
+                    command = "/bin/launchctl unload \(item.path.shellQuoted)"
                 } else {
-                    command = needsSudo ? "sudo launchctl disable \("\(domain)/\(item.label)".shellQuoted)" : "launchctl disable \("\(domain)/\(item.label)".shellQuoted)"
+                    command = "/bin/launchctl disable \("\(domain)/\(item.label)".shellQuoted)"
                 }
             case "kickstart":
-                command = needsSudo ? "sudo launchctl kickstart -k \("\(domain)/\(item.label)".shellQuoted)" : "launchctl kickstart -k \("\(domain)/\(item.label)".shellQuoted)"
+                command = "/bin/launchctl kickstart -k \("\(domain)/\(item.label)".shellQuoted)"
             case "remove":
-                command = needsSudo ? "sudo launchctl remove \(item.label.shellQuoted)" : "launchctl remove \(item.label.shellQuoted)"
+                command = "/bin/launchctl remove \(item.label.shellQuoted)"
             default:
                 await MainActor.run {
                     isPerformingAction = false
@@ -998,13 +992,18 @@ struct LaunchItemRowView: View {
             // Execute command based on privilege requirements
             if needsSudo {
                 // Use privileged command execution for daemons/system services
-                let result = try! await runSUCommand(
-                    command,
-                    errorContext: "Daemon operation failed",
-                    throwOnFailure: false
-                )
-                success = result.0
-                output = result.1
+                do {
+                    let result = try await runSUCommand(
+                        command,
+                        errorContext: "Daemon operation failed",
+                        throwOnFailure: false
+                    )
+                    success = result.0
+                    output = result.1
+                } catch {
+                    output = error.localizedDescription
+                    printOS("Daemon operation failed: \(output)")
+                }
             } else {
                 // Use direct shell command for user agents
                 let result = await Task.detached {
@@ -1070,10 +1069,16 @@ private func runDirectShellCommand(command: String) -> (Bool, String) {
     task.standardOutput = pipe
     task.standardError = pipe
     
-    task.launch()
-    task.waitUntilExit()
-    
+    do {
+        try task.run()
+    } catch {
+        return (false, error.localizedDescription)
+    }
+
+    // Drain the pipe while the process runs so a large launchctl response
+    // cannot fill the pipe buffer and deadlock the scan.
     let data = pipe.fileHandleForReading.readDataToEndOfFile()
+    task.waitUntilExit()
     let output = String(data: data, encoding: .utf8) ?? ""
     
     return (task.terminationStatus == 0, output)

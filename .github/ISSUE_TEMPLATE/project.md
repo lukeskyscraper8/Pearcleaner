@@ -1,15 +1,20 @@
-This project is now in **maintenance mode**.
+# Maintenance Policy
 
----
+This independently maintained fork focuses on stability and reliability. New
+feature requests are not currently accepted.
 
-I’m no longer accepting **NEW** feature requests as Pearcleaner has grown to be fairly feature rich, 
-and I want to avoid it ballooning further in size or scope. Keeping the project stable, focused, and maintainable is now the priority. Going forward, the focus will be on:
+Current priorities are:
 
 - Bug fixes
+- Security fixes
 - Regressions
-- Small improvements to already existing features
+- Small improvements to existing features
 
-Issues related to bugs are still welcome, and reasonable pull requests that focus on fixes or reliability 
-improvements will still be reviewed. New feature requests will be ignored/closed if submitted.
+Bug reports are welcome through the
+[bug template](https://github.com/lukeskyscraper8/Pearcleaner/issues/new?template=bug.md).
+Reasonable pull requests focused on fixes or reliability improvements can still
+be reviewed. New feature requests will be closed.
 
-Thanks to everyone who has used the project, filed issues, and contributed over time!
+Potential vulnerabilities must follow the
+[security policy](https://github.com/lukeskyscraper8/Pearcleaner/blob/main/SECURITY.md)
+rather than being disclosed in a normal public issue.

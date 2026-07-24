@@ -2,6 +2,7 @@
 //  HomebrewController.swift
 //  Pearcleaner
 //
+//  Modified for the independently maintained Pearcleaner fork.
 //  Created by Alin Lupascu on 10/01/25.
 //
 
@@ -265,49 +266,6 @@ class HomebrewController: ObservableObject {
 
     // MARK: - Shell Command Execution
 
-    /// Checks if command output indicates authentication failure
-    private func isAuthenticationFailure(_ output: String) -> Bool {
-        let indicators = [
-            "Sorry, try again",
-            "incorrect password",
-            "Authentication failure",
-            "sudo: 3 incorrect password attempts",
-            "sudo: no password was provided",
-            "sudo: a password is required"
-        ]
-        return indicators.contains { output.lowercased().contains($0.lowercased()) }
-    }
-
-    /// Runs brew command with auto-retry on authentication failure
-    func runBrewCommandWithRetry(_ arguments: [String], maxRetries: Int = 2) async throws -> (output: String, error: String) {
-        var attemptCount = 0
-
-        while attemptCount < maxRetries {
-            let (output, error) = try await runBrewCommand(arguments)
-
-            // Check for authentication failure
-            let combinedOutput = output + error
-            if isAuthenticationFailure(combinedOutput) {
-                printOS("🔐 Authentication failed, retrying with a fresh prompt (attempt \(attemptCount + 1)/\(maxRetries))")
-                attemptCount += 1
-
-                if attemptCount < maxRetries {
-                    continue  // Retry with fresh password
-                } else {
-                    // Max retries reached, return the failed output
-                    printOS("❌ Authentication failed after \(maxRetries) attempts")
-                    return (output, error)
-                }
-            }
-
-            // Success or non-auth error
-            return (output, error)
-        }
-
-        // This shouldn't be reached, but return empty as fallback
-        return ("", "Max retries reached")
-    }
-
     func runBrewCommand(_ arguments: [String]) async throws -> (output: String, error: String) {
         // Mark operation as running - explicitly trigger SwiftUI update
         await MainActor.run {
@@ -320,12 +278,6 @@ class HomebrewController: ObservableObject {
         process.executableURL = URL(fileURLWithPath: brewPath)
         process.arguments = arguments
 
-        // Set up environment with SUDO_ASKPASS for password prompts during install/update
-        var environment = ProcessInfo.processInfo.userEnvironment
-        let askpassPath = "\(Bundle.main.bundlePath)/Contents/Resources/askpass.sh"
-        environment["SUDO_ASKPASS"] = askpassPath
-        process.environment = environment
-
         let outputPipe = Pipe()
         let errorPipe = Pipe()
         process.standardOutput = outputPipe
@@ -334,7 +286,16 @@ class HomebrewController: ObservableObject {
         // Store process reference for cancellation
         await MainActor.run { runningProcess = process }
 
-        try process.run()
+        do {
+            try process.run()
+        } catch {
+            await MainActor.run {
+                objectWillChange.send()
+                isOperationRunning = false
+                runningProcess = nil
+            }
+            throw error
+        }
 
         // Drain stdout and stderr concurrently. Reading one pipe to EOF before
         // the other can deadlock when the child fills the unread pipe buffer.
@@ -1160,10 +1121,14 @@ class HomebrewController: ObservableObject {
         }
     }
 
-    func upgradePackage(name: String) async throws {
-        logger.log(.homebrew, "⬆️ Upgrading package: \(name)")
+    static func upgradeArguments(name: String, cask: Bool) -> [String] {
+        cask ? ["upgrade", "--cask", name] : ["upgrade", name]
+    }
 
-        let arguments = ["upgrade", name]
+    func upgradePackage(name: String, cask: Bool) async throws {
+        logger.log(.homebrew, "⬆️ Upgrading \(cask ? "cask" : "formula"): \(name)")
+
+        let arguments = Self.upgradeArguments(name: name, cask: cask)
 
         do {
             let result = try await runBrewCommand(arguments)
@@ -1841,9 +1806,22 @@ class HomebrewController: ObservableObject {
                 await MainActor.run {
                     GlobalConsoleManager.shared.appendOutput("Cleaning \(itemCount) items...\n", source: CurrentPage.homebrew.title)
                 }
-                let _ = FileManagerUndo.shared.deleteFiles(at: filesToDelete, bundleName: "BrewCleanup")
-                await MainActor.run {
-                    GlobalConsoleManager.shared.appendOutput("Cleanup complete\n", source: CurrentPage.homebrew.title)
+                let result = FileManagerUndo.shared.deleteFilesWithResult(
+                    at: filesToDelete,
+                    bundleName: "BrewCleanup"
+                )
+                if result.allSucceeded {
+                    await MainActor.run {
+                        GlobalConsoleManager.shared.appendOutput("Cleanup complete\n", source: CurrentPage.homebrew.title)
+                    }
+                } else {
+                    let message = result.protectedURLs.isEmpty
+                        ? "Homebrew cleanup moved \(result.movedURLs.count) of \(result.requestedURLs.count) item(s) to Trash."
+                        : "Homebrew cleanup was not run because it included protected paths. Use Homebrew directly to clean those files."
+                    await MainActor.run {
+                        GlobalConsoleManager.shared.appendOutput("Cleanup failed: \(message)\n", source: CurrentPage.homebrew.title)
+                    }
+                    throw HomebrewError.commandFailed(message)
                 }
             } else {
                 await MainActor.run {
@@ -1941,7 +1919,17 @@ class HomebrewController: ObservableObject {
     func calculateCacheSize() async -> (bytes: Int64, formatted: String) {
         // Wrapper around runCleanup with dry-run mode
         // Returns size of cleanable cache without actually deleting anything
-        return try! await runCleanup(dryRun: true) ?? (0, "0 bytes")
+        do {
+            return try await runCleanup(dryRun: true) ?? (0, "0 bytes")
+        } catch {
+            await MainActor.run {
+                GlobalConsoleManager.shared.appendOutput(
+                    "Unable to calculate cache size: \(error.localizedDescription)\n",
+                    source: CurrentPage.homebrew.title
+                )
+            }
+            return (0, "0 bytes")
+        }
     }
 
     func calculateFormulaSize(name: String, version: String) async -> (Int64, String) {
