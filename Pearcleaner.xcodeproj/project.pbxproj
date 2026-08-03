@@ -8,6 +8,7 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		A12600000000000000000001 /* PearcleanerPreferencesStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = A12600000000000000000002 /* PearcleanerPreferencesStore.swift */; };
 		A12500000000000000000001 /* SentinelServiceManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = A12500000000000000000002 /* SentinelServiceManager.swift */; };
 		C707E2942EAF217200AAD817 /* Sparkle in Frameworks */ = {isa = PBXBuildFile; productRef = C707E2932EAF217200AAD817 /* Sparkle */; };
 		C71449E52DA826610032B295 /* Lipo.swift in Sources */ = {isa = PBXBuildFile; fileRef = C7C90DD22DA81C590056769A /* Lipo.swift */; };
@@ -139,6 +140,7 @@
 /* Begin PBXFileReference section */
 		A12400000000000000000001 /* PearcleanerTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = PearcleanerTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		A12500000000000000000002 /* SentinelServiceManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SentinelServiceManager.swift; sourceTree = "<group>"; };
+		A12600000000000000000002 /* PearcleanerPreferencesStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PearcleanerPreferencesStore.swift; sourceTree = "<group>"; };
 		C7149E782E68DE7E00A15356 /* Localizable.xcstrings */ = {isa = PBXFileReference; lastKnownFileType = text.json.xcstrings; path = Localizable.xcstrings; sourceTree = "<group>"; };
 		C72893042AFD42E600C8C1CD /* DeepLink.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DeepLink.swift; sourceTree = "<group>"; };
 		C728930F2AFD51EA00C8C1CD /* PearcleanerSentinel */ = {isa = PBXFileReference; explicitFileType = "compiled.mach-o.executable"; includeInIndex = 0; path = PearcleanerSentinel; sourceTree = BUILT_PRODUCTS_DIR; };
@@ -321,6 +323,7 @@
 				C7C90DD22DA81C590056769A /* Lipo.swift */,
 				C7D31D502AFF00F300C7ED9E /* Locations.swift */,
 				C77B90192AF1938F009CC655 /* Logic.swift */,
+				A12600000000000000000002 /* PearcleanerPreferencesStore.swift */,
 				C7CC10E32E9473480057B7E2 /* ProcessEnv.swift */,
 				A12500000000000000000002 /* SentinelServiceManager.swift */,
 				C7DD49ED2BAB7F6000CCBA16 /* ReversePathsFetch.swift */,
@@ -718,6 +721,7 @@
 				C7D31D512AFF00F300C7ED9E /* Locations.swift in Sources */,
 				C77B901A2AF1938F009CC655 /* Logic.swift in Sources */,
 				C78D7B212D556F1A003DD49F /* AppPathsFetch.swift in Sources */,
+				A12600000000000000000001 /* PearcleanerPreferencesStore.swift in Sources */,
 				A12500000000000000000001 /* SentinelServiceManager.swift in Sources */,
 				C770D7DB2CE7C9AD00B3492A /* DevelopmentView.swift in Sources */,
 				C74422412E4936750002D277 /* DaemonView.swift in Sources */,
@@ -906,8 +910,8 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				ALWAYS_SEARCH_USER_PATHS = NO;
-				APP_BUILD = 122;
-				APP_VERSION = 5.4.4;
+				APP_BUILD = 125;
+				APP_VERSION = 5.4.5;
 				ASSETCATALOG_COMPILER_GENERATE_SWIFT_ASSET_SYMBOL_EXTENSIONS = YES;
 				CLANG_ANALYZER_LOCALIZABILITY_NONLOCALIZED = YES;
 				CLANG_ANALYZER_NONNULL = YES;
@@ -980,8 +984,8 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				ALWAYS_SEARCH_USER_PATHS = NO;
-				APP_BUILD = 122;
-				APP_VERSION = 5.4.4;
+				APP_BUILD = 125;
+				APP_VERSION = 5.4.5;
 				ASSETCATALOG_COMPILER_GENERATE_SWIFT_ASSET_SYMBOL_EXTENSIONS = YES;
 				CLANG_ANALYZER_LOCALIZABILITY_NONLOCALIZED = YES;
 				CLANG_ANALYZER_NONNULL = YES;
