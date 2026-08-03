@@ -82,7 +82,11 @@ struct PearCLI: ParsableCommand {
             }
 
             // Use the AppPathFinder to find paths synchronously
-            let appPathFinder = AppPathFinder(appInfo: appInfo, locations: PearCLI.locations)
+            let appPathFinder = AppPathFinder(
+                appInfo: appInfo,
+                locations: PearCLI.locations,
+                folderSettingsManager: PearCLI.fsm
+            )
 
             // Call findPaths to get the Set of URLs
             let foundPaths = appPathFinder.findPathsCLI()
@@ -204,7 +208,11 @@ struct PearCLI: ParsableCommand {
             }
 
             // Use the AppPathFinder to find paths synchronously
-            let appPathFinder = AppPathFinder(appInfo: appInfo, locations: PearCLI.locations)
+            let appPathFinder = AppPathFinder(
+                appInfo: appInfo,
+                locations: PearCLI.locations,
+                folderSettingsManager: PearCLI.fsm
+            )
 
             // Call findPaths to get the Set of URLs
             let foundPaths = appPathFinder.findPathsCLI()

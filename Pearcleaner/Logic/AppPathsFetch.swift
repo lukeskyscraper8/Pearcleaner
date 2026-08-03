@@ -24,10 +24,17 @@ extension String {
     }
 }
 
+func appPathMatchesFormattedExclusions(_ fileURL: URL, formattedExclusions: [String]) -> Bool {
+    let normalizedPath = fileURL.standardizedFileURL.path.pearFormat()
+    return formattedExclusions.contains(normalizedPath) ||
+        formattedExclusions.contains(where: { normalizedPath.contains($0) })
+}
+
 class AppPathFinder {
     // Shared properties
     private var appInfo: AppInfo
     private var locations: Locations
+    private let folderSettingsManager: FolderSettingsManager
     private var containerCollection: [URL] = []
     private let collectionAccessQueue = DispatchQueue(label: "com.lukerow.Pearcleaner.appPathFinder.collectionAccess")
     @AppStorage("settings.general.searchSensitivity") private var sensitivityLevel: SearchSensitivityLevel = .strict
@@ -57,7 +64,7 @@ class AppPathFinder {
 
     // Exclusion list for app file search (computed property to always get current list)
     private var formattedAppExclusionList: [String] {
-        return FolderSettingsManager.shared.fileFolderPathsApps.map { $0.pearFormat() }
+        return folderSettingsManager.fileFolderPathsApps.map { $0.pearFormat() }
     }
 
     // Computed property to get the effective sensitivity level
@@ -66,9 +73,18 @@ class AppPathFinder {
     }
 
     // Initializer for both CLI and GUI
-    init(appInfo: AppInfo, locations: Locations, appState: AppState? = nil, undo: Bool = false, sensitivityOverride: SearchSensitivityLevel? = nil, completion: (() -> Void)? = nil) {
+    init(
+        appInfo: AppInfo,
+        locations: Locations,
+        appState: AppState? = nil,
+        undo: Bool = false,
+        sensitivityOverride: SearchSensitivityLevel? = nil,
+        completion: (() -> Void)? = nil,
+        folderSettingsManager: FolderSettingsManager = .shared
+    ) {
         self.appInfo = appInfo
         self.locations = locations
+        self.folderSettingsManager = folderSettingsManager
         self.appState = appState
         self.undo = undo
         self.overrideSensitivityLevel = sensitivityOverride
@@ -645,10 +661,9 @@ class AppPathFinder {
             }
 
             // Apply app exclusion filter to ALL discovered files (from all code paths)
+            let formattedExclusions = self.formattedAppExclusionList
             tempCollection.removeAll { fileURL in
-                let normalizedPath = fileURL.standardizedFileURL.path.pearFormat()
-                return self.formattedAppExclusionList.contains(normalizedPath) ||
-                self.formattedAppExclusionList.contains(where: { normalizedPath.contains($0) })
+                appPathMatchesFormattedExclusions(fileURL, formattedExclusions: formattedExclusions)
             }
 
             let sortedCollection = tempCollection.map { $0.standardizedFileURL }.sorted(by: { $0.path < $1.path })
@@ -693,10 +708,9 @@ class AppPathFinder {
         }
 
         // Apply app exclusion filter to ALL discovered files (from all code paths)
+        let formattedExclusions = formattedAppExclusionList
         tempCollection.removeAll { fileURL in
-            let normalizedPath = fileURL.standardizedFileURL.path.pearFormat()
-            return formattedAppExclusionList.contains(normalizedPath) ||
-                   formattedAppExclusionList.contains(where: { normalizedPath.contains($0) })
+            appPathMatchesFormattedExclusions(fileURL, formattedExclusions: formattedExclusions)
         }
 
         let sortedCollection = tempCollection.map { $0.standardizedFileURL }.sorted(by: { $0.path < $1.path })

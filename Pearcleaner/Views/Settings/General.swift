@@ -15,7 +15,7 @@ struct GeneralSettingsTab: View {
     @EnvironmentObject var appState: AppState
     @EnvironmentObject var locations: Locations
     @Environment(\.colorScheme) var colorScheme
-    @AppStorage("settings.sentinel.enable") private var sentinel: Bool = false
+    @ObservedObject private var sentinelManager = SentinelServiceManager.shared
     @AppStorage("settings.general.brew") private var brew: Bool = false
     @AppStorage("settings.general.oneshot") private var oneShotMode: Bool = false
     @AppStorage("settings.general.confirmAlert") private var confirmAlert: Bool = false
@@ -218,33 +218,57 @@ struct GeneralSettingsTab: View {
             PearGroupBox(
                 header: { Text("Sentinel Monitor").foregroundStyle(ThemeColors.shared(for: colorScheme).primaryText).font(.title2) },
                 content: {
-                    HStack(spacing: 0) {
-                        Image(systemName: sentinel ? "eye.circle" : "eye.slash.circle")
-                            .resizable()
-                            .scaledToFit()
-                            .frame(width: 15, height: 15)
-                            .padding(.trailing)
-                            .foregroundStyle(ThemeColors.shared(for: colorScheme).primaryText)
-                        Text("Detect when apps are moved to Trash")
-                            .font(.callout)
-                            .foregroundStyle(ThemeColors.shared(for: colorScheme).primaryText)
-                        InfoButton(text: String(localized: "When applications are moved to Trash, Pearcleaner will launch and find related files and folders for deletion."))
-                        Spacer()
+                    VStack(alignment: .leading, spacing: 6) {
+                        HStack(spacing: 0) {
+                            Image(systemName: sentinelManager.isActuallyEnabled ? "eye.circle" : "eye.slash.circle")
+                                .resizable()
+                                .scaledToFit()
+                                .frame(width: 15, height: 15)
+                                .padding(.trailing)
+                                .foregroundStyle(ThemeColors.shared(for: colorScheme).primaryText)
+                            Text("Detect when apps are moved to Trash")
+                                .font(.callout)
+                                .foregroundStyle(ThemeColors.shared(for: colorScheme).primaryText)
+                            InfoButton(text: String(localized: "When applications are moved to Trash, Pearcleaner will launch and find related files and folders for deletion."))
+                            Spacer()
 
-                        Toggle(isOn: $sentinel, label: {
-                        })
-                        .toggleStyle(SettingsToggle())
-                        .onChange(of: sentinel) { newValue in
-                            if newValue {
-                                launchctl(load: true)
-                            } else {
-                                launchctl(load: false)
+                            Toggle(
+                                isOn: Binding(
+                                    get: { sentinelManager.desiredEnabled },
+                                    set: { _ = sentinelManager.setDesiredEnabled($0) }
+                                ),
+                                label: {}
+                            )
+                            .toggleStyle(SettingsToggle())
+                        }
+
+                        HStack(spacing: 6) {
+                            Text("Actual status: \(sentinelManager.actualStatusDescription)")
+                                .font(.footnote)
+                                .foregroundStyle(ThemeColors.shared(for: colorScheme).secondaryText)
+
+                            if sentinelManager.requiresApproval {
+                                Button {
+                                    sentinelManager.openSystemSettingsLoginItems()
+                                } label: {
+                                    Image(systemName: "gear")
+                                }
+                                .buttonStyle(.plain)
+                                .help("Open Login Items")
                             }
                         }
 
+                        if let errorMessage = sentinelManager.lastErrorMessage {
+                            Text("Sentinel error: \(errorMessage)")
+                                .font(.footnote)
+                                .foregroundStyle(.red)
+                        }
                     }
                     .padding(5)
                 })
+                .onAppear {
+                    _ = sentinelManager.reconcileStoredPreference()
+                }
 
             // === Finder Extension =============================================================================================
             PearGroupBox(

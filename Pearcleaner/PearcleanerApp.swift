@@ -10,6 +10,10 @@ import SwiftUI
 import AppKit
 import AlinFoundation
 
+private var isRunningPearcleanerTests: Bool {
+    ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] != nil
+}
+
 @main
 struct PearcleanerApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) var appDelegate
@@ -25,6 +29,10 @@ struct PearcleanerApp: App {
     init() {
         //MARK: GUI or CLI launch mode.
         handleLaunchMode()
+
+        if !isRunningPearcleanerTests {
+            _ = SentinelServiceManager.shared.reconcileAtLaunch()
+        }
 
         // Remove credentials cached by older versions. Pearcleaner no longer
         // collects or stores a sudo password.
@@ -86,6 +94,11 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
         ensureApplicationSupportFolderExists()
 
+    }
+
+    func applicationDidBecomeActive(_ notification: Notification) {
+        guard !isRunningPearcleanerTests else { return }
+        _ = SentinelServiceManager.shared.reconcileStoredPreference()
     }
 
     func applicationWillTerminate(_ notification: Notification) {}

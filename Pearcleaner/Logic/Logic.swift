@@ -8,7 +8,6 @@
 
 import AlinFoundation
 import Foundation
-import ServiceManagement
 import SwiftUI
 import UniformTypeIdentifiers
 
@@ -611,7 +610,7 @@ func handleLaunchMode() {
 
     if isRunningInTerminal || hasCLICommand {
         let locations = Locations()
-        let fsm = FolderSettingsManager()
+        let fsm = FolderSettingsManager(preferences: PearcleanerPreferencesStore.shared)
         PearCLI.setupDependencies(locations: locations, fsm: fsm)
         do {
             // Drop the program name as to not interfere with argument parsing
@@ -1477,7 +1476,7 @@ func removeApp(appState: AppState, withPath path: URL) async {
 func uninstallPearcleaner(appState: AppState, locations: Locations) {
 
     // Unload Sentinel Monitor if running
-    launchctl(load: false)
+    _ = SentinelServiceManager.shared.setDesiredEnabled(false)
 
     // Get app info for Pearcleaner
     let appInfo = AppInfoFetcher.getAppInfo(atPath: Bundle.main.bundleURL)
@@ -1498,27 +1497,6 @@ func uninstallPearcleaner(appState: AppState, locations: Locations) {
             exit(0)
         }
     ).findPaths()
-}
-
-// --- Load Plist file with SMAppService ---
-func launchctl(load: Bool, completion: @escaping () -> Void = {}) {
-    let service = SMAppService.agent(plistName: "com.lukerow.PearcleanerSentinel.plist")
-
-    if load {
-        do {
-            try service.register()
-        } catch let error as NSError {
-            printOS("Error registering PearcleanerSentinel: \(error)")
-        }
-    } else {
-        do {
-            try service.unregister()
-        } catch let error as NSError {
-            printOS("Error unregistering PearcleanerSentinel: \(error)")
-        }
-    }
-
-    completion()
 }
 
 func createTarArchive(appState: AppState) {
