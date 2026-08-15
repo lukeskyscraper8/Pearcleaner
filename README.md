@@ -5,9 +5,6 @@
 > [!IMPORTANT]
 > This repository is a modified, independently maintained fork of [alienator88/Pearcleaner](https://github.com/alienator88/Pearcleaner). The original project's website is [itsalin.com](https://itsalin.com). Downloads presented as official upstream releases anywhere else may be unsafe. See the [maintained-fork notice](NOTICE) and the related [community warning](https://www.reddit.com/r/macapps/comments/1ucstzy/psa_pearcleanercom_is_a_fake_site_pushing_macos/).
 
-> [!CAUTION]
-> The fork's currently published 5.4.4 ZIP fails strict macOS code-signature verification and should not be installed. Build from source or wait for a corrected signed release.
-
 ## Project Status
 
 This fork is actively maintained with a focus on bug fixes, regressions, security, and small reliability improvements. It is not currently accepting new feature requests.
@@ -31,7 +28,9 @@ The following notice is quoted from the upstream maintainer and is retained as h
   <br />
   <strong>Status: </strong>Independently Maintained Fork
   <br />
-  <strong>Version: </strong>5.4.4
+  <strong>Source version: </strong>5.4.5 (unreleased)
+  <br />
+  <strong>Latest release: </strong>5.4.4
   <br />
   <a href="https://github.com/lukeskyscraper8/Pearcleaner/releases"><strong>Releases</strong></a>
   ·

@@ -74,7 +74,9 @@ class DeeplinkManager {
         if let host = url.host, DeepLinkActions.allActions.contains(host) {
             switch host {
             case DeepLinkActions.uninstallApp:
-                handleAsPathOrDropped(url: url, appState: appState, locations: locations)
+                confirmIfNeeded(host: host, detail: url.absoluteString) {
+                    self.handleAsPathOrDropped(url: url, appState: appState, locations: locations)
+                }
             default:
                 if let components = URLComponents(url: url, resolvingAgainstBaseURL: true),
                    let queryItems = components.queryItems {
@@ -84,8 +86,9 @@ class DeeplinkManager {
                 }
             }
         } else {
-            // Host is nil or not in actions, treat as dropped/path scenario
-            handleAsPathOrDropped(url: url, appState: appState, locations: locations)
+            confirmIfNeeded(host: url.host ?? "openApp", detail: url.absoluteString) {
+                self.handleAsPathOrDropped(url: url, appState: appState, locations: locations)
+            }
         }
     }
 
@@ -258,13 +261,19 @@ class DeeplinkManager {
                let pathValue = queryItems.first(where: { $0.name == "path" })?.value {
                 var isDirectory: ObjCBool = false
                 if FileManager.default.fileExists(atPath: pathValue, isDirectory: &isDirectory), isDirectory.boolValue {
-                    switch actionType {
-                    case "add":
-                        fsm.addPath(pathValue)
-                    case "remove":
-                        fsm.removePath(pathValue)
-                    default:
-                        printOS("DLM: Invalid action type for appsPaths: \(actionType)")
+                    if actionType == "add" && !FolderPathPolicy.isAcceptableScanRoot(pathValue) {
+                        printOS("DLM: Rejected scan root '\(pathValue)'.")
+                        break
+                    }
+                    confirmIfNeeded(host: action, detail: "\(actionType) \(pathValue)") {
+                        switch actionType {
+                        case "add":
+                            fsm.addPath(pathValue)
+                        case "remove":
+                            fsm.removePath(pathValue)
+                        default:
+                            printOS("DLM: Invalid action type for appsPaths: \(actionType)")
+                        }
                     }
                 } else {
                     printOS("DLM: Provided path '\(pathValue)' does not exist or is not a directory.")
@@ -277,14 +286,19 @@ class DeeplinkManager {
         case DeepLinkActions.orphanedPaths:
             if let actionType = queryItems.first(where: { $0.name == "add" || $0.name == "remove" })?.name,
                let pathValue = queryItems.first(where: { $0.name == "path" })?.value {
-
-                switch actionType {
-                case "add":
-                    fsm.addPathZ(pathValue)
-                case "remove":
-                    fsm.removePathZ(pathValue)
-                default:
-                    printOS("DLM: Invalid action type for orphanedPaths: \(actionType)")
+                if actionType == "add" && !FolderPathPolicy.isAcceptableOrphanExclusion(pathValue) {
+                    printOS("DLM: Rejected orphan exclusion '\(pathValue)'.")
+                    break
+                }
+                confirmIfNeeded(host: action, detail: "\(actionType) \(pathValue)") {
+                    switch actionType {
+                    case "add":
+                        fsm.addPathZ(pathValue)
+                    case "remove":
+                        fsm.removePathZ(pathValue)
+                    default:
+                        printOS("DLM: Invalid action type for orphanedPaths: \(actionType)")
+                    }
                 }
             } else {
                 printOS("DLM: Missing 'add' or 'remove' action, or 'path' query item for orphanedPaths.")
@@ -295,6 +309,24 @@ class DeeplinkManager {
             break
         default:
             break
+        }
+    }
+
+    private func confirmIfNeeded(host: String, detail: String, proceed: @escaping () -> Void) {
+        guard DeepLinkSafety.requiresConfirmation(host: host) || host == "openApp" || !DeepLinkActions.allActions.contains(host) else {
+            proceed()
+            return
+        }
+
+        updateOnMain {
+            showCustomAlert(
+                title: "Allow Pearcleaner link?",
+                message: "A pear:// link wants to continue:\n\(detail)",
+                style: .warning,
+                onOk: {
+                    proceed()
+                }
+            )
         }
     }
 

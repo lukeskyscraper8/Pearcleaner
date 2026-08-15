@@ -43,16 +43,30 @@ enum SettingsExportCodec {
         )
     }
 
-    static func importSettings(from data: Data) throws -> [String: Any] {
+    static func importSettings(
+        from data: Data,
+        allowedKeys: Set<String> = SettingsKeyAllowlist.all
+    ) throws -> [String: Any] {
         guard let root = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
             throw CodecError.invalidRoot
         }
 
         var settings: [String: Any] = [:]
         for (key, value) in root where key.hasPrefix("settings.") {
-            settings[key] = try decode(value)
+            let decoded = try decode(value)
+            guard allowedKeys.contains(key) else { continue }
+            settings[key] = sanitizedImportValue(decoded, for: key)
         }
         return settings
+    }
+
+    private static func sanitizedImportValue(_ value: Any, for key: String) -> Any {
+        guard SettingsKeyAllowlist.folderKeys.contains(key),
+              let paths = value as? [String] else {
+            return value
+        }
+        let allowKeywords = key == FolderPreferenceKey.orphanExclusions.rawValue
+        return FolderPathPolicy.sanitizedFolderList(paths, allowKeywords: allowKeywords)
     }
 
     private static func encode(_ value: Any) throws -> Any {

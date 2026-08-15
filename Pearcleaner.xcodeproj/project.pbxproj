@@ -8,6 +8,8 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		A12700000000000000000001 /* PrivilegedOperation.swift in Sources */ = {isa = PBXBuildFile; fileRef = A12700000000000000000002 /* PrivilegedOperation.swift */; };
+		A12700000000000000000003 /* PrivilegedOperation.swift in Sources */ = {isa = PBXBuildFile; fileRef = A12700000000000000000002 /* PrivilegedOperation.swift */; };
 		A12600000000000000000001 /* PearcleanerPreferencesStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = A12600000000000000000002 /* PearcleanerPreferencesStore.swift */; };
 		A12500000000000000000001 /* SentinelServiceManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = A12500000000000000000002 /* SentinelServiceManager.swift */; };
 		C707E2942EAF217200AAD817 /* Sparkle in Frameworks */ = {isa = PBXBuildFile; productRef = C707E2932EAF217200AAD817 /* Sparkle */; };
@@ -181,6 +183,7 @@
 		C7B3AB072D83900B00D829C5 /* com.lukerow.PearcleanerSentinel.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = com.lukerow.PearcleanerSentinel.plist; sourceTree = "<group>"; };
 		C7BB99282E8AF1CB007BBB81 /* PluginsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PluginsView.swift; sourceTree = "<group>"; };
 		C7BB992E2E8B225F007BBB81 /* FileSearchView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FileSearchView.swift; sourceTree = "<group>"; };
+		A12700000000000000000002 /* PrivilegedOperation.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PrivilegedOperation.swift; sourceTree = "<group>"; };
 		C7C90DD22DA81C590056769A /* Lipo.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Lipo.swift; sourceTree = "<group>"; };
 		C7CC10E32E9473480057B7E2 /* ProcessEnv.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProcessEnv.swift; sourceTree = "<group>"; };
 		C7D31D502AFF00F300C7ED9E /* Locations.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Locations.swift; sourceTree = "<group>"; };
@@ -218,6 +221,13 @@
 			);
 			target = C77B8FFF2AF18E2E009CC655 /* Pearcleaner */;
 		};
+		C75E82E62E8C58620090C3B3 /* PBXFileSystemSynchronizedBuildFileExceptionSet */ = {
+			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
+			membershipExceptions = (
+				AppGroupDefaults.swift,
+			);
+			target = C728930E2AFD51EA00C8C1CD /* PearcleanerSentinel */;
+		};
 		C75E82E52E8C58620090C3B1 /* PBXFileSystemSynchronizedBuildFileExceptionSet */ = {
 			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
 			membershipExceptions = (
@@ -252,7 +262,7 @@
 		C74649EE2E4800BB002D1C63 /* AppsView */ = {isa = PBXFileSystemSynchronizedRootGroup; explicitFileTypes = {}; explicitFolders = (); path = AppsView; sourceTree = "<group>"; };
 		C74649EF2E480111002D1C63 /* Style */ = {isa = PBXFileSystemSynchronizedRootGroup; exceptions = (C74649F02E480128002D1C63 /* PBXFileSystemSynchronizedBuildFileExceptionSet */, ); explicitFileTypes = {}; explicitFolders = (); path = Style; sourceTree = "<group>"; };
 		C74649FA2E48076B002D1C63 /* Settings */ = {isa = PBXFileSystemSynchronizedRootGroup; explicitFileTypes = {}; explicitFolders = (); path = Settings; sourceTree = "<group>"; };
-		C75E82DD2E8C58380090C3B1 /* Shared */ = {isa = PBXFileSystemSynchronizedRootGroup; exceptions = (C75E82E42E8C58620090C3B1 /* PBXFileSystemSynchronizedBuildFileExceptionSet */, C75E82E52E8C58620090C3B1 /* PBXFileSystemSynchronizedBuildFileExceptionSet */, C75E82E12E8C585D0090C3B1 /* PBXFileSystemSynchronizedBuildFileExceptionSet */, ); explicitFileTypes = {}; explicitFolders = (); path = Shared; sourceTree = "<group>"; };
+		C75E82DD2E8C58380090C3B1 /* Shared */ = {isa = PBXFileSystemSynchronizedRootGroup; exceptions = (C75E82E42E8C58620090C3B1 /* PBXFileSystemSynchronizedBuildFileExceptionSet */, C75E82E52E8C58620090C3B1 /* PBXFileSystemSynchronizedBuildFileExceptionSet */, C75E82E12E8C585D0090C3B1 /* PBXFileSystemSynchronizedBuildFileExceptionSet */, C75E82E62E8C58620090C3B3 /* PBXFileSystemSynchronizedBuildFileExceptionSet */, ); explicitFileTypes = {}; explicitFolders = (); path = Shared; sourceTree = "<group>"; };
 		C76073F32E3C1C2C003957A7 /* FilesView */ = {isa = PBXFileSystemSynchronizedRootGroup; explicitFileTypes = {}; explicitFolders = (); path = FilesView; sourceTree = "<group>"; };
 		C783F8FD2E903707003450E7 /* FileSearch */ = {isa = PBXFileSystemSynchronizedRootGroup; explicitFileTypes = {}; explicitFolders = (); path = FileSearch; sourceTree = "<group>"; };
 		C783F9492E903B53003450E7 /* PKG */ = {isa = PBXFileSystemSynchronizedRootGroup; explicitFileTypes = {}; explicitFolders = (); path = PKG; sourceTree = "<group>"; };
@@ -321,6 +331,7 @@
 				C73AE1912EC69A81009CAC42 /* GlobalConsoleManager.swift */,
 				C73545EA2D8496DA00A3DC0C /* HelperToolManager.swift */,
 				C7C90DD22DA81C590056769A /* Lipo.swift */,
+				A12700000000000000000002 /* PrivilegedOperation.swift */,
 				C7D31D502AFF00F300C7ED9E /* Locations.swift */,
 				C77B90192AF1938F009CC655 /* Logic.swift */,
 				A12600000000000000000002 /* PearcleanerPreferencesStore.swift */,
@@ -699,6 +710,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				C71449E52DA826610032B295 /* Lipo.swift in Sources */,
+				A12700000000000000000003 /* PrivilegedOperation.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -717,6 +729,7 @@
 				C77020292EA94D0A00240D58 /* FuzzySearch.swift in Sources */,
 				C7BB99292E8AF1CB007BBB81 /* PluginsView.swift in Sources */,
 				C7C90DD32DA81C5D0056769A /* Lipo.swift in Sources */,
+				A12700000000000000000001 /* PrivilegedOperation.swift in Sources */,
 				C7A2A4D62DDB957D006E05E4 /* CLI.swift in Sources */,
 				C7D31D512AFF00F300C7ED9E /* Locations.swift in Sources */,
 				C77B901A2AF1938F009CC655 /* Logic.swift in Sources */,
@@ -821,7 +834,7 @@
 				buildSettings = {
 					APP_BUILD = "$(APP_BUILD)";
 					APP_VERSION = "$(APP_VERSION)";
-					CODE_SIGN_ENTITLEMENTS = "";
+					CODE_SIGN_ENTITLEMENTS = PearcleanerSentinel/PearcleanerSentinel.entitlements;
 					"CODE_SIGN_IDENTITY[sdk=macosx*]" = "Apple Development";
 					CODE_SIGN_STYLE = Automatic;
 					CURRENT_PROJECT_VERSION = "$(APP_BUILD)";
@@ -844,7 +857,7 @@
 				buildSettings = {
 					APP_BUILD = "$(APP_BUILD)";
 					APP_VERSION = "$(APP_VERSION)";
-					CODE_SIGN_ENTITLEMENTS = "";
+					CODE_SIGN_ENTITLEMENTS = PearcleanerSentinel/PearcleanerSentinel.entitlements;
 					"CODE_SIGN_IDENTITY[sdk=macosx*]" = "Developer ID Application";
 					CODE_SIGN_INJECT_BASE_ENTITLEMENTS = NO;
 					CODE_SIGN_STYLE = Manual;
@@ -910,7 +923,7 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				ALWAYS_SEARCH_USER_PATHS = NO;
-				APP_BUILD = 125;
+				APP_BUILD = 126;
 				APP_VERSION = 5.4.5;
 				ASSETCATALOG_COMPILER_GENERATE_SWIFT_ASSET_SYMBOL_EXTENSIONS = YES;
 				CLANG_ANALYZER_LOCALIZABILITY_NONLOCALIZED = YES;
@@ -984,7 +997,7 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				ALWAYS_SEARCH_USER_PATHS = NO;
-				APP_BUILD = 125;
+				APP_BUILD = 126;
 				APP_VERSION = 5.4.5;
 				ASSETCATALOG_COMPILER_GENERATE_SWIFT_ASSET_SYMBOL_EXTENSIONS = YES;
 				CLANG_ANALYZER_LOCALIZABILITY_NONLOCALIZED = YES;

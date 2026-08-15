@@ -11,7 +11,7 @@ import ObjectiveC
 
 @objc(HelperToolProtocol)
 public protocol HelperToolProtocol {
-    func runCommand(command: String, withReply reply: @escaping (Bool, String) -> Void)
+    func runOperation(name: String, arguments: [String], withReply reply: @escaping (Bool, String) -> Void)
     func runThinning(atPath: String, withReply reply: @escaping (Bool, String) -> Void)
     func runBundleThinning(bundlePath: String, withReply reply: @escaping (Bool, String, [String: UInt64]) -> Void)
 }
@@ -46,11 +46,23 @@ class HelperToolDelegate: NSObject, NSXPCListenerDelegate, HelperToolProtocol {
         return true
     }
     
-    // Execute the shell command and reply with output.
-    func runCommand(command: String, withReply reply: @escaping (Bool, String) -> Void) {
+    func runOperation(name: String, arguments: [String], withReply reply: @escaping (Bool, String) -> Void) {
+        switch PrivilegedOperationPolicy.invocation(name: name, arguments: arguments) {
+        case .failure:
+            reply(false, "Rejected privileged operation")
+            return
+        case .success(let invocation):
+            runValidatedProcess(invocation, reply: reply)
+        }
+    }
+
+    private func runValidatedProcess(
+        _ invocation: PrivilegedProcessInvocation,
+        reply: @escaping (Bool, String) -> Void
+    ) {
         let process = Process()
-        process.executableURL = URL(fileURLWithPath: "/bin/bash")
-        process.arguments = ["-c", command]
+        process.executableURL = URL(fileURLWithPath: invocation.executable)
+        process.arguments = invocation.arguments
         let outputPipe = Pipe()
         let errorPipe = Pipe()
         process.standardOutput = outputPipe
@@ -110,13 +122,20 @@ class HelperToolDelegate: NSObject, NSXPCListenerDelegate, HelperToolProtocol {
         reply(success, output.isEmpty ? "No output" : output)
     }
     
-    // Execute app lipo using privileges for apps owned by root
     func runThinning(atPath: String, withReply reply: @escaping (Bool, String) -> Void) {
+        guard ThinningPathPolicy.isAcceptable(atPath) else {
+            reply(false, "Rejected thinning path")
+            return
+        }
         let success = thinBinaryUsingMachO(executablePath: atPath)
         reply(success, success ? "Success" : "Failed")
     }
     
     func runBundleThinning(bundlePath: String, withReply reply: @escaping (Bool, String, [String: UInt64]) -> Void) {
+        guard ThinningPathPolicy.isAcceptable(bundlePath) else {
+            reply(false, "Rejected thinning path", [:])
+            return
+        }
         let bundleURL = URL(fileURLWithPath: bundlePath)
         let result = thinAppBundle(at: bundleURL)
         

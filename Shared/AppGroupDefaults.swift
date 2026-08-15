@@ -12,6 +12,7 @@ extension UserDefaults {
 
     struct Keys {
         static let showAppIconInMenu = "showAppIconInMenu"
+        static let sentinelWatcherPaused = "sentinelWatcherPaused"
     }
 
     // Setting for showing app icon in context menu
@@ -21,6 +22,15 @@ extension UserDefaults {
         }
         set {
             appGroup.set(newValue, forKey: Keys.showAppIconInMenu)
+        }
+    }
+
+    static var sentinelWatcherPaused: Bool {
+        get {
+            return appGroup.bool(forKey: Keys.sentinelWatcherPaused)
+        }
+        set {
+            appGroup.set(newValue, forKey: Keys.sentinelWatcherPaused)
         }
     }
 }

@@ -105,7 +105,7 @@ class HomebrewAutoUpdateManager: ObservableObject {
 
     private let plistPath = "\(NSHomeDirectory())/Library/LaunchAgents/com.lukerow.Pearcleaner.homebrew-autoupdate.plist"
     private let label = "com.lukerow.Pearcleaner.homebrew-autoupdate"
-    let logPath = "/tmp/homebrew-autoupdate.log"
+    let logPath = NSHomeDirectory() + "/Library/Logs/Pearcleaner/homebrew-autoupdate.log"
 
     private init() {
         loadSchedule()
@@ -543,7 +543,8 @@ class HomebrewAutoUpdateManager: ObservableObject {
         scriptLines.append("echo \"================================\"")
 
         // Wrap in braces for single execution block and redirect to overwrite log file
-        let scriptBlock = "{ " + scriptLines.joined(separator: "; ") + "; } > /tmp/homebrew-autoupdate.log 2>&1"
+        let logDirectory = (logPath as NSString).deletingLastPathComponent
+        let scriptBlock = "/bin/mkdir -p \(logDirectory.shellQuoted); { " + scriptLines.joined(separator: "; ") + "; } > \(logPath.shellQuoted) 2>&1"
 
         // Escape XML special characters for plist
         let escapedCommand = scriptBlock

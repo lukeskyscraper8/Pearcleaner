@@ -67,7 +67,7 @@ struct SettingsView: View {
                         }
 
                         Button {
-                            showCustomAlert(title: "Reset BTM", message: "This resets the whole Background Task Management database and will clear your 'Open at Login' and 'App Background Activity' list.", style: .warning, onOk: {
+                            showCustomAlert(title: "Reset all login items?", message: "This runs sfltool resetbtm and clears every app's Open at Login and Background Activity entries on this Mac, not just Pearcleaner. Continue only if helper recovery failed and you understand you will need to re-enable other apps' login items.", style: .critical, onOk: {
                                 Task {
                                     let _ = await helperToolManager.nuclearResetHelper()
                                 }

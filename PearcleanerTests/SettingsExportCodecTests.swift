@@ -18,7 +18,14 @@ final class SettingsExportCodecTests: XCTestCase {
             "unrelated.key": "must not be exported"
         ])
 
-        let imported = try SettingsExportCodec.importSettings(from: exported)
+        let imported = try SettingsExportCodec.importSettings(
+            from: exported,
+            allowedKeys: [
+                "settings.interface.hiddenPages",
+                "settings.interface.enabled",
+                "settings.interface.scale"
+            ]
+        )
 
         XCTAssertEqual(imported["settings.interface.hiddenPages"] as? Data, hiddenPages)
         XCTAssertEqual(imported["settings.interface.enabled"] as? Bool, true)
@@ -35,7 +42,10 @@ final class SettingsExportCodecTests: XCTestCase {
             ]
         ])
 
-        let imported = try SettingsExportCodec.importSettings(from: exported)
+        let imported = try SettingsExportCodec.importSettings(
+            from: exported,
+            allowedKeys: ["settings.nested"]
+        )
         let nested = try XCTUnwrap(imported["settings.nested"] as? [String: Any])
         let values = try XCTUnwrap(nested["values"] as? [Any])
 
@@ -49,7 +59,10 @@ final class SettingsExportCodecTests: XCTestCase {
             "arbitrary.default": "rejected"
         ])
 
-        let imported = try SettingsExportCodec.importSettings(from: data)
+        let imported = try SettingsExportCodec.importSettings(
+            from: data,
+            allowedKeys: ["settings.valid"]
+        )
 
         XCTAssertEqual(imported.keys.sorted(), ["settings.valid"])
     }

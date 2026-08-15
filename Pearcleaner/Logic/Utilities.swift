@@ -158,7 +158,6 @@ func manageSymlink(install: Bool, symlinkName: String = "pear") {
         return
     }
 
-    let privilegedCommand: String
     let privilegedRequiresExistingBin: Bool
     if install {
         guard pathIsDirectoryWithoutFollowingSymlinks(rootURL),
@@ -238,9 +237,6 @@ func manageSymlink(install: Bool, symlinkName: String = "pear") {
         }
 
         privilegedRequiresExistingBin = binExists
-        privilegedCommand = binExists
-            ? "/bin/ln -s \(appPath.shellQuoted) \(symlinkPath.shellQuoted)"
-            : "/bin/mkdir /usr/local/bin && /bin/ln -s \(appPath.shellQuoted) \(symlinkPath.shellQuoted)"
     } else {
         guard managedCLISymlinkMatchesExecutable(
             at: symlinkPath,
@@ -285,7 +281,6 @@ func manageSymlink(install: Bool, symlinkName: String = "pear") {
             return
         }
         privilegedRequiresExistingBin = true
-        privilegedCommand = "/bin/rm -f -- \(symlinkPath.shellQuoted)"
     }
 
     // Perform privileged commands using the unified wrapper.
@@ -325,8 +320,11 @@ func manageSymlink(install: Bool, symlinkName: String = "pear") {
                 }
             }
 
-            let result = try await runSUCommand(
-                privilegedCommand,
+            let result = try await runSUOperation(
+                name: install ? "create-cli-symlink" : "remove-cli-symlink",
+                arguments: install
+                    ? [appPath, symlinkName] + (privilegedRequiresExistingBin ? [] : ["mkdir"])
+                    : [symlinkName],
                 errorContext: "Failed to \(operation) CLI symlink",
                 throwOnFailure: false
             )
@@ -964,11 +962,11 @@ extension String {
 }
 
 func sendStartNotificationFW() {
-    DistributedNotificationCenter.default().postNotificationName(Notification.Name("Pearcleaner.StartFileWatcher"), object: nil, userInfo: nil, deliverImmediately: true)
+    UserDefaults.sentinelWatcherPaused = false
 }
 
 func sendStopNotificationFW() {
-    DistributedNotificationCenter.default().postNotificationName(Notification.Name("Pearcleaner.StopFileWatcher"), object: nil, userInfo: nil, deliverImmediately: true)
+    UserDefaults.sentinelWatcherPaused = true
 }
 
 func formatRelativeTime(_ date: Date) -> String {
@@ -1071,26 +1069,44 @@ func formatBytes(_ bytes: Int64) -> String {
 /// Executes privileged commands through a preflighted helper when available.
 /// Authorization Services is used only before the real command has been
 /// dispatched, so an ambiguous XPC reply can never trigger a duplicate retry.
-func runSUCommand(
-    _ command: String,
+func runSUOperation(
+    name: String,
+    arguments: [String] = [],
     errorContext: String? = nil,
     skipHelperCheck: Bool = false,
     throwOnFailure: Bool = false
 ) async throws -> (success: Bool, output: String) {
-
-    // Pattern 1: Skip helper check (for CLI diagnostics)
-    if skipHelperCheck {
-        let result = await HelperToolManager.shared.runCommand(command, skipHelperCheck: true)
-        return result
+    let invocation: PrivilegedProcessInvocation
+    switch PrivilegedOperationPolicy.invocation(name: name, arguments: arguments) {
+    case .success(let validated):
+        invocation = validated
+    case .failure(let error):
+        let message = "Rejected privileged operation: \(error)"
+        if let context = errorContext {
+            printOS("\(context): \(message)")
+        }
+        if throwOnFailure {
+            throw NSError(
+                domain: "SU Command",
+                code: 1,
+                userInfo: [NSLocalizedDescriptionKey: message]
+            )
+        }
+        return (false, message)
     }
-    
-    // Pattern 2: Probe helper transport with a non-mutating command before
-    // dispatching the real operation. Once a mutating command is sent, never
-    // retry it automatically: a lost XPC reply does not prove it did not run.
+
+    if skipHelperCheck {
+        return await HelperToolManager.shared.runOperation(
+            name,
+            arguments: arguments,
+            skipHelperCheck: true
+        )
+    }
+
     if HelperToolManager.shared.isHelperToolInstalled {
-        let readiness = await HelperToolManager.shared.runCommand("/usr/bin/true")
+        let readiness = await HelperToolManager.shared.runOperation("probe")
         if readiness.0 {
-            let result = await HelperToolManager.shared.runCommand(command)
+            let result = await HelperToolManager.shared.runOperation(name, arguments: arguments)
             if result.0 {
                 return result
             }
@@ -1113,9 +1129,7 @@ func runSUCommand(
         }
     }
 
-    // Pattern 3: Use Authorization Services only when no mutation has been
-    // dispatched to the helper.
-    let (success, output) = performPrivilegedCommands(commands: command)
+    let (success, output) = performPrivilegedCommands(commands: invocation.shellCommand)
 
     // Log custom error if provided and command failed
     if !success, let context = errorContext {
