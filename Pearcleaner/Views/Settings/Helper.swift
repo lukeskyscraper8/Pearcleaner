@@ -16,7 +16,6 @@ struct HelperSettingsTab: View {
 #if DEBUG
     @State private var commandOutput: String = "Command output will display here"
     @State private var commandToRun: String = "whoami"
-    @State private var commandToRunManual: String = ""
     @State private var showTestingUI: Bool = false
 #endif
 
@@ -115,50 +114,15 @@ struct HelperSettingsTab: View {
 
                     Picker("Example privileged commands", selection: $commandToRun) {
                         Text(verbatim: "whoami").tag("whoami")
-                        Text(verbatim: "systemsetup -getsleep").tag("systemsetup -getsleep")
-                        Text(verbatim: "systemsetup -getcomputername").tag("systemsetup -getcomputername")
                     }
                     .foregroundStyle(ThemeColors.shared(for: colorScheme).primaryText)
                     .pickerStyle(MenuPickerStyle())
-                    .onChange(of: commandToRun) { newValue in
-                        if helperToolManager.isHelperToolInstalled {
-                            Task {
-                                let (success, output) = await helperToolManager.runCommand(commandToRun)
-                                if success {
-                                    commandOutput = output
-                                } else {
-                                    commandOutput = "Error: \(output)"
-                                }
-                            }
-                        }
+                    .onChange(of: commandToRun) { _ in
+                        Task { await runAllowedHelperProbe() }
                     }
-                    .onAppear{
-                        if helperToolManager.isHelperToolInstalled {
-                            Task {
-                                let (success, output) = await helperToolManager.runCommand(commandToRun)
-                                if success {
-                                    commandOutput = output
-                                } else {
-                                    commandOutput = "Error: \(output)"
-                                }
-                            }
-                        }
+                    .onAppear {
+                        Task { await runAllowedHelperProbe() }
                     }
-
-                    TextField("Enter manual command here, Enter to run", text: $commandToRunManual)
-                        .padding(8)
-                        .background(RoundedRectangle(cornerRadius: 8).strokeBorder(ThemeColors.shared(for: colorScheme).secondaryText.opacity(0.2), lineWidth: 1))
-                        .textFieldStyle(.plain)
-                        .onSubmit {
-                            Task {
-                                let (success, output) = await helperToolManager.runCommand(commandToRunManual)
-                                if success {
-                                    commandOutput = output
-                                } else {
-                                    commandOutput = "Error: \(output)"
-                                }
-                            }
-                        }
 
                     ScrollView {
                         Text(commandOutput)
@@ -190,18 +154,21 @@ struct HelperSettingsTab: View {
             }
 #if DEBUG
             if helperToolManager.isHelperToolInstalled && showTestingUI {
-                Task {
-                    let (success, output) = await helperToolManager.runCommand(commandToRun)
-                    if success {
-                        commandOutput = output
-                    } else {
-                        printOS("Helper: \(output)")
-                    }
-                }
+                Task { await runAllowedHelperProbe() }
             }
 #endif
         }
 
     }
+
+#if DEBUG
+    private func runAllowedHelperProbe() async {
+        guard helperToolManager.isHelperToolInstalled else { return }
+        let (success, output) = await helperToolManager.runOperation("whoami")
+        await MainActor.run {
+            commandOutput = success ? output : "Error: \(output)"
+        }
+    }
+#endif
 
 }

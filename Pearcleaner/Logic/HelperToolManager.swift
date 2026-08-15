@@ -16,7 +16,7 @@ extension Notification.Name {
 
 @objc(HelperToolProtocol)
 public protocol HelperToolProtocol {
-    func runCommand(command: String, withReply reply: @escaping (Bool, String) -> Void)
+    func runOperation(name: String, arguments: [String], withReply reply: @escaping (Bool, String) -> Void)
     func runThinning(atPath: String, withReply reply: @escaping (Bool, String) -> Void)
     func runBundleThinning(bundlePath: String, withReply reply: @escaping (Bool, String, [String: UInt64]) -> Void)
 }
@@ -72,7 +72,7 @@ class HelperToolManager: ObservableObject {
                 SMAppService.openSystemSettingsLoginItems()
             case .enabled:
                 // Verify the helper actually works (same desync check as .none action)
-                let whoamiResult = await runCommand("whoami", skipHelperCheck: true)
+                let whoamiResult = await runOperation("whoami", arguments: [], skipHelperCheck: true)
                 let isRoot = whoamiResult.0 && whoamiResult.1.trimmingCharacters(in: .whitespacesAndNewlines) == "root"
 
                 if !isRoot {
@@ -168,8 +168,11 @@ class HelperToolManager: ObservableObject {
         SMAppService.openSystemSettingsLoginItems()
     }
 
-    // Function to run privileged commands
-    func runCommand(_ command: String, skipHelperCheck: Bool = false) async -> (Bool, String) {
+    func runOperation(
+        _ name: String,
+        arguments: [String] = [],
+        skipHelperCheck: Bool = false
+    ) async -> (Bool, String) {
         if !skipHelperCheck && !isHelperToolInstalled {
             return (false, "XPC: Helper tool is not installed")
         }
@@ -186,7 +189,7 @@ class HelperToolManager: ObservableObject {
                 return
             }
 
-            proxy.runCommand(command: command, withReply: { success, output in
+            proxy.runOperation(name: name, arguments: arguments, withReply: { success, output in
                 continuation.resume(returning: (success, output))
             })
         }
@@ -239,6 +242,7 @@ class HelperToolManager: ObservableObject {
         }
         let connection = NSXPCConnection(machServiceName: helperToolIdentifier, options: .privileged)
         connection.remoteObjectInterface = NSXPCInterface(with: HelperToolProtocol.self)
+        connection.setCodeSigningRequirement(HelperIdentity.helperRequirement)
         connection.invalidationHandler = { [weak self] in
             self?.helperConnection = nil
         }
@@ -281,7 +285,7 @@ class HelperToolManager: ObservableObject {
                     self.message = String(localized: "Service hasn't been registered. You may register it now.")
                 }
             case .enabled:
-                let whoamiResult = await runCommand("whoami", skipHelperCheck: true)
+                let whoamiResult = await runOperation("whoami", arguments: [], skipHelperCheck: true)
                 let isRoot = whoamiResult.0 && whoamiResult.1.trimmingCharacters(in: .whitespacesAndNewlines) == "root"
 
                 if !isRoot {

@@ -17,7 +17,7 @@ struct CodesignCheck {
     /// The privileged service must only accept this exact application identity.
     /// Matching a certificate alone would also admit unrelated apps signed by
     /// the same developer certificate.
-    static let clientRequirement = #"identifier "com.lukerow.Pearcleaner" and anchor apple generic and certificate leaf[subject.OU] = "68583N3MNF""#
+    static let clientRequirement = HelperIdentity.clientRequirement
 
     static func clientIsPearcleaner(pid: pid_t) throws -> Bool {
         var guestCode: SecCode?

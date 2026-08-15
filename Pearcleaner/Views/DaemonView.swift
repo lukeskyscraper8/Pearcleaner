@@ -958,27 +958,26 @@ struct LaunchItemRowView: View {
 
         Task {
             let needsSudo = isDaemonOrSystemService()
-            let command: String
             let domain = item.domain == "user" ? "gui/\(getuid())" : "system"
+            let operationArguments: [String]
 
-            // Build the appropriate command based on action and privilege needs
             switch action {
             case "load":
                 if !item.path.isEmpty && item.path != "Not found" {
-                    command = "/bin/launchctl load \(item.path.shellQuoted)"
+                    operationArguments = ["load", item.path]
                 } else {
-                    command = "/bin/launchctl enable \("\(domain)/\(item.label)".shellQuoted)"
+                    operationArguments = ["enable", "\(domain)/\(item.label)"]
                 }
             case "unload":
                 if !item.path.isEmpty && item.path != "Not found" {
-                    command = "/bin/launchctl unload \(item.path.shellQuoted)"
+                    operationArguments = ["unload", item.path]
                 } else {
-                    command = "/bin/launchctl disable \("\(domain)/\(item.label)".shellQuoted)"
+                    operationArguments = ["disable", "\(domain)/\(item.label)"]
                 }
             case "kickstart":
-                command = "/bin/launchctl kickstart -k \("\(domain)/\(item.label)".shellQuoted)"
+                operationArguments = ["kickstart", "-k", "\(domain)/\(item.label)"]
             case "remove":
-                command = "/bin/launchctl remove \(item.label.shellQuoted)"
+                operationArguments = ["remove", item.label]
             default:
                 await MainActor.run {
                     isPerformingAction = false
@@ -988,13 +987,13 @@ struct LaunchItemRowView: View {
 
             var success = false
             var output = ""
+            let commandDescription = (["launchctl"] + operationArguments).joined(separator: " ")
 
-            // Execute command based on privilege requirements
             if needsSudo {
-                // Use privileged command execution for daemons/system services
                 do {
-                    let result = try await runSUCommand(
-                        command,
+                    let result = try await runSUOperation(
+                        name: "launchctl",
+                        arguments: operationArguments,
                         errorContext: "Daemon operation failed",
                         throwOnFailure: false
                     )
@@ -1005,14 +1004,19 @@ struct LaunchItemRowView: View {
                     printOS("Daemon operation failed: \(output)")
                 }
             } else {
-                // Use direct shell command for user agents
-                let result = await Task.detached {
-                    return runDirectShellCommand(command: command)
-                }.value
-                success = result.0
-                output = result.1
-                if !success {
+                switch PrivilegedOperationPolicy.invocation(name: "launchctl", arguments: operationArguments) {
+                case .failure(let error):
+                    output = "Rejected launchctl operation: \(error)"
                     printOS("User launch command failed: \(output)")
+                case .success(let invocation):
+                    let result = await Task.detached {
+                        return runDirectShellCommand(command: invocation.shellCommand)
+                    }.value
+                    success = result.0
+                    output = result.1
+                    if !success {
+                        printOS("User launch command failed: \(output)")
+                    }
                 }
             }
 
@@ -1020,7 +1024,7 @@ struct LaunchItemRowView: View {
                 isPerformingAction = false
 
                 if success {
-                    printOS("Successfully executed: \(command)")
+                    printOS("Successfully executed: \(commandDescription)")
                     // Success - refresh the list after a short delay
                     DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
                         onUpdate()

@@ -442,6 +442,7 @@ class FolderSettingsManager: ObservableObject {
     }
 
     func addPath(_ path: String) {
+        guard FolderPathPolicy.isAcceptableScanRoot(path) else { return }
         if !self.folderPaths.contains(path) {
             self.folderPaths.append(path)
             preferences.set(self.folderPaths, for: .applications)
@@ -473,6 +474,7 @@ class FolderSettingsManager: ObservableObject {
 
     // Orphaned files //////////////////////////////////////////////////////////////////////////////////
     func addPathZ(_ path: String) {
+        guard FolderPathPolicy.isAcceptableOrphanExclusion(path) else { return }
         let sanitizedPath = URL(fileURLWithPath: path).standardizedFileURL.path
 
         if !self.fileFolderPathsZ.contains(sanitizedPath) {

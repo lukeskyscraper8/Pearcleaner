@@ -22,25 +22,7 @@ func startGlobalFileWatcher() {
     globalFileWatcher?.start()
 }
 
-func stopGlobalFileWatcher() {
-    globalFileWatcher?.stop()
-    globalFileWatcher = nil
-}
-
-func setupNotificationListener() {
-    let notificationCenter = DistributedNotificationCenter.default()
-    notificationCenter.addObserver(forName: Notification.Name("Pearcleaner.StartFileWatcher"), object: nil, queue: nil) { notification in
-        print("Received start notification")
-        startGlobalFileWatcher()
-    }
-    notificationCenter.addObserver(forName: Notification.Name("Pearcleaner.StopFileWatcher"), object: nil, queue: nil) { notification in
-        print("Received stop notification")
-        stopGlobalFileWatcher()
-    }
-}
-
 func main() {
-    setupNotificationListener()
     startGlobalFileWatcher()
     RunLoop.main.run()
 }
@@ -55,6 +37,9 @@ func checkApp(file: String) {
                 return
             } else {
                 if FileManager.default.isInTrash(app) {
+                    if UserDefaults.sentinelWatcherPaused {
+                        return
+                    }
                     var components = URLComponents()
                     components.scheme = "pear"
                     components.host = "openApp"

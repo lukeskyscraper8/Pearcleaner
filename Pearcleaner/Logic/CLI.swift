@@ -393,7 +393,10 @@ struct PearCLI: ParsableCommand {
 
         // Helper function to check if privileged helper is enabled
         private func isHelperEnabled() async -> Bool {
-            guard let result = try? await runSUCommand("whoami", skipHelperCheck: true) else {
+            guard let result = try? await runSUOperation(
+                name: "whoami",
+                skipHelperCheck: true
+            ) else {
                 return false
             }
             return result.0 && result.1.trimmingCharacters(in: .whitespacesAndNewlines) == "root"
