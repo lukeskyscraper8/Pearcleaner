@@ -104,7 +104,7 @@ struct SettingsView: View {
                     case .about:
                         // About tab toolbar item
                         Button(action: {
-                            NSWorkspace.shared.open(URL(string: "https://github.com/sponsors/lukerow")!)
+                            NSWorkspace.shared.open(URL(string: "https://github.com/sponsors/lukeskyscraper8")!)
                         }, label: {
                             Label {
                                 Text("Sponsor")
