@@ -34,3 +34,16 @@ public struct SessionFindingHeader: Sendable, Equatable {
         self.suppressionState = suppressionState
     }
 }
+
+public struct SessionFinding: Sendable, Equatable {
+    public let header: SessionFindingHeader
+    public let location: VerifiedRelativePath?
+    public let displayPath: EscapedDisplayPath?
+    public let line: UInt64?
+    public let evidence: RedactedSourceField?
+}
+
+public enum SessionAppendResult: Sendable, Equatable {
+    case appended
+    case limitReached
+}
