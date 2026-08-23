@@ -10,6 +10,9 @@
 /* Begin PBXBuildFile section */
 		A20000000000000000000009 /* libProjectScannerCore.a in Frameworks */ = {isa = PBXBuildFile; fileRef = A20000000000000000000001 /* libProjectScannerCore.a */; };
 		A2000000000000000000000A /* libProjectScannerCore.a in Frameworks */ = {isa = PBXBuildFile; fileRef = A20000000000000000000001 /* libProjectScannerCore.a */; };
+		A20000000000000000000041 /* KeychainProjectKeyStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000042 /* KeychainProjectKeyStore.swift */; };
+		A20000000000000000000043 /* ProjectScannerEnvironment.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000044 /* ProjectScannerEnvironment.swift */; };
+		A20000000000000000000045 /* ScannerDiagnosticsAdapter.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000046 /* ScannerDiagnosticsAdapter.swift */; };
 		A12700000000000000000001 /* PrivilegedOperation.swift in Sources */ = {isa = PBXBuildFile; fileRef = A12700000000000000000002 /* PrivilegedOperation.swift */; };
 		A12700000000000000000003 /* PrivilegedOperation.swift in Sources */ = {isa = PBXBuildFile; fileRef = A12700000000000000000002 /* PrivilegedOperation.swift */; };
 		A12600000000000000000001 /* PearcleanerPreferencesStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = A12600000000000000000002 /* PearcleanerPreferencesStore.swift */; };
@@ -158,6 +161,9 @@
 /* Begin PBXFileReference section */
 		A20000000000000000000001 /* libProjectScannerCore.a */ = {isa = PBXFileReference; explicitFileType = archive.ar; includeInIndex = 0; path = libProjectScannerCore.a; sourceTree = BUILT_PRODUCTS_DIR; };
 		A20000000000000000000002 /* ProjectScannerCoreTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = ProjectScannerCoreTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		A20000000000000000000042 /* KeychainProjectKeyStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProjectScanner/KeychainProjectKeyStore.swift; sourceTree = "<group>"; };
+		A20000000000000000000044 /* ProjectScannerEnvironment.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProjectScanner/ProjectScannerEnvironment.swift; sourceTree = "<group>"; };
+		A20000000000000000000046 /* ScannerDiagnosticsAdapter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProjectScanner/ScannerDiagnosticsAdapter.swift; sourceTree = "<group>"; };
 		A12400000000000000000001 /* PearcleanerTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = PearcleanerTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		A12500000000000000000002 /* SentinelServiceManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SentinelServiceManager.swift; sourceTree = "<group>"; };
 		A12600000000000000000002 /* PearcleanerPreferencesStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PearcleanerPreferencesStore.swift; sourceTree = "<group>"; };
@@ -312,6 +318,7 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				A20000000000000000000009 /* libProjectScannerCore.a in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -356,6 +363,9 @@
 		C72893072AFD442600C8C1CD /* Logic */ = {
 			isa = PBXGroup;
 			children = (
+				A20000000000000000000042 /* KeychainProjectKeyStore.swift */,
+				A20000000000000000000044 /* ProjectScannerEnvironment.swift */,
+				A20000000000000000000046 /* ScannerDiagnosticsAdapter.swift */,
 				C77B90172AF19382009CC655 /* AppCommands.swift */,
 				C7DD49E92BAB4D8100CCBA16 /* AppInfoFetch.swift */,
 				C78D7B202D556F16003DD49F /* AppPathsFetch.swift */,
@@ -824,6 +834,9 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				A20000000000000000000041 /* KeychainProjectKeyStore.swift in Sources */,
+				A20000000000000000000043 /* ProjectScannerEnvironment.swift in Sources */,
+				A20000000000000000000045 /* ScannerDiagnosticsAdapter.swift in Sources */,
 				C7DD49EA2BAB4D8100CCBA16 /* AppInfoFetch.swift in Sources */,
 				C75AED102EC259C800824CCD /* UndoHistoryManager.swift in Sources */,
 				C7CC10E42E94734E0057B7E2 /* ProcessEnv.swift in Sources */,
