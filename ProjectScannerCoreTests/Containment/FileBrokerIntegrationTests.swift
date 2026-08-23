@@ -110,11 +110,16 @@ final class FileBrokerIntegrationTests: XCTestCase {
         })
     }
 
-    func testFourThousandNinetySixByteLinkTargetIsAcceptedButTruncationIsRejected() async throws {
-        XCTAssertNil(FileBrokerPlatform.linkTargetLengthRejection(byteCount: 4_096))
+    func testFourThousandNinetySixByteLinkTargetIsAcceptedButTruncationIsRejected() throws {
+        let probe = [UInt8](repeating: 0x61, count: 4_097)
+
         XCTAssertEqual(
-            FileBrokerPlatform.linkTargetLengthRejection(byteCount: 4_097),
-            .pathTooLong
+            FileBrokerPlatform.decodeLinkProbe(returnedCount: 4_096, buffer: probe),
+            .accepted(Data(probe.prefix(4_096)))
+        )
+        XCTAssertEqual(
+            FileBrokerPlatform.decodeLinkProbe(returnedCount: 4_097, buffer: probe),
+            .rejected(.pathTooLong)
         )
     }
 
@@ -219,6 +224,107 @@ final class FileBrokerIntegrationTests: XCTestCase {
         XCTAssertTrue(skips(in: depthEvents).contains { $0.1 == .pathTooLong })
     }
 
+    func testLogicalDepthOverflowSkipsOnlyThatSubtreeAndPreservesPeer() async throws {
+        let fixture = try TemporaryProjectFixture()
+        defer { fixture.remove() }
+        let branches = try makeOrderedBranches(in: fixture)
+        guard let overflowBranch = branches.first, let peerBranch = branches.last else {
+            return XCTFail("Expected ordered branch fixtures")
+        }
+        try fixture.rawDirectoryChain(
+            Array(repeating: Data("a".utf8), count: 128),
+            parent: overflowBranch
+        )
+        XCTAssertTrue(FileManager.default.createFile(
+            atPath: peerBranch.appendingPathComponent("z-peer").path,
+            contents: Data("peer".utf8)
+        ))
+
+        let events = try await traverse(fixture.url)
+
+        XCTAssertTrue(skips(in: events).contains { $0.1 == .pathTooLong })
+        XCTAssertTrue(candidatePaths(in: events).contains("\(peerBranch.lastPathComponent)/z-peer"))
+    }
+
+    func testLogicalPathByteOverflowSkipsOnlyThatSubtreeAndPreservesPeer() async throws {
+        let fixture = try TemporaryProjectFixture()
+        defer { fixture.remove() }
+        let branches = try makeOrderedBranches(in: fixture)
+        guard let overflowBranch = branches.first, let peerBranch = branches.last else {
+            return XCTFail("Expected ordered branch fixtures")
+        }
+        let components = (0..<17).map { index in
+            Data(repeating: UInt8(0x61 + index), count: 255)
+        }
+        try fixture.rawDirectoryChain(components, parent: overflowBranch)
+        XCTAssertTrue(FileManager.default.createFile(
+            atPath: peerBranch.appendingPathComponent("z-peer").path,
+            contents: Data("peer".utf8)
+        ))
+
+        let events = try await traverse(fixture.url)
+
+        XCTAssertTrue(skips(in: events).contains { $0.1 == .pathTooLong })
+        XCTAssertTrue(candidatePaths(in: events).contains("\(peerBranch.lastPathComponent)/z-peer"))
+    }
+
+    func testGeneralFileDetectorLimitDoesNotTruncateRawTraversal() async throws {
+        let fixture = try TemporaryProjectFixture()
+        defer { fixture.remove() }
+        _ = try fixture.regularFile(named: "one")
+        _ = try fixture.regularFile(named: "two")
+        _ = try fixture.regularFile(named: "three")
+        let limits = try ScanLimitOverrides(generalFiles: 1).applying(to: .defaults)
+
+        let events = try await traverse(fixture.url, limits: limits)
+
+        XCTAssertEqual(candidatePaths(in: events), ["one", "three", "two"])
+        XCTAssertFalse(skips(in: events).contains { $0.1 == .entryBudget })
+    }
+
+    func testShortLogicalLinkToOverdeepPhysicalTargetSkipsOnlyLinkAndPreservesPeer() async throws {
+        let fixture = try TemporaryProjectFixture()
+        defer { fixture.remove() }
+        let components = Array(repeating: Data("d".utf8), count: 129)
+        try fixture.rawDirectoryChain(components, finalFileName: Data("leaf".utf8))
+        try fixture.rawSymbolicLink(
+            nameBytes: Data("a-deep-link".utf8),
+            targetBytes: Data((Array(repeating: "d", count: 129) + ["leaf"]).joined(separator: "/").utf8)
+        )
+        _ = try fixture.regularFile(named: "z-peer")
+
+        let events = try await traverse(fixture.url)
+
+        XCTAssertTrue(skips(in: events).contains {
+            path(of: $0.0) == "a-deep-link" && $0.1 == .pathTooLong
+        })
+        XCTAssertTrue(candidatePaths(in: events).contains("z-peer"))
+    }
+
+    func testNestedShortLinksCannotBuildOverlongPhysicalTarget() async throws {
+        let fixture = try TemporaryProjectFixture()
+        defer { fixture.remove() }
+        let groups = (0..<16).map { group -> [Data] in
+            let first = Data(repeating: UInt8(0x61 + (group % 20)), count: 128)
+            let second = Data(repeating: UInt8(0x41 + (group % 20)), count: 128)
+            return [first, second]
+        }
+        try fixture.rawNestedLinkPath(
+            componentGroups: groups,
+            outerLinkName: Data("a-long-link".utf8),
+            hopLinkName: Data("next".utf8),
+            finalFileName: Data("leaf".utf8)
+        )
+        _ = try fixture.regularFile(named: "z-peer")
+
+        let events = try await traverse(fixture.url)
+
+        XCTAssertTrue(skips(in: events).contains {
+            path(of: $0.0) == "a-long-link" && $0.1 == .pathTooLong
+        })
+        XCTAssertTrue(candidatePaths(in: events).contains("z-peer"))
+    }
+
     func testOverlongTotalPathProducesSafeSkipWithoutConstructingInvalidPath() async throws {
         let fixture = try TemporaryProjectFixture()
         defer { fixture.remove() }
@@ -246,6 +352,71 @@ final class FileBrokerIntegrationTests: XCTestCase {
         }
         XCTAssertNil(parent)
         XCTAssertEqual(escapedLeaf?.text, "a\\u{0}\\xFF")
+    }
+
+    func testRawControlByteNameTraversesAndRevalidatesByRawIdentity() async throws {
+        let fixture = try TemporaryProjectFixture()
+        defer { fixture.remove() }
+        let rawName = Data([0x72, 0x0A, 0x7F])
+        let expectedIdentity = try fixture.rawRegularFile(
+            nameBytes: rawName,
+            contents: Data("non-empty".utf8)
+        )
+        let capability = try RootCapability.open(selectedURL: fixture.url)
+        let broker = try capability.makeFileBroker(limits: .defaults)
+        let traversal = try await broker.makeTraversal()
+
+        guard case let .candidate(candidate)? = try await traversal.next() else {
+            return XCTFail("Expected raw-byte candidate")
+        }
+        XCTAssertEqual(candidate.logicalPath.identityComponents, [rawName])
+        XCTAssertEqual(candidate.logicalPath.escapedForDisplay().text, "r\\u{A}\\u{7F}")
+        XCTAssertEqual(candidate.identity, expectedIdentity)
+        let revalidation = await broker.revalidate(candidate)
+        XCTAssertEqual(revalidation, .valid)
+    }
+
+    func testNonEmptyLinkCandidateAndNestedProofRevalidate() async throws {
+        let fixture = try TemporaryProjectFixture()
+        defer { fixture.remove() }
+        _ = try fixture.regularFile(named: "target", contents: Data("non-empty".utf8))
+        try fixture.symbolicLink(at: fixture.url.appendingPathComponent("nested"), target: "target")
+        try fixture.symbolicLink(at: fixture.url.appendingPathComponent("outer"), target: "nested")
+        let capability = try RootCapability.open(selectedURL: fixture.url)
+        let broker = try capability.makeFileBroker(limits: .defaults)
+        let traversal = try await broker.makeTraversal()
+        var outer: FileCandidate?
+        while let event = try await traversal.next() {
+            if case let .candidate(candidate) = event,
+               candidate.logicalPath.escapedForDisplay().text == "outer" {
+                outer = candidate
+            }
+        }
+
+        guard let outer else { return XCTFail("Expected outer link candidate") }
+        let revalidation = await broker.revalidate(outer)
+        XCTAssertEqual(revalidation, .valid)
+    }
+
+    func testForeignBrokerRejectsCandidate() async throws {
+        let first = try TemporaryProjectFixture()
+        defer { first.remove() }
+        _ = try first.regularFile(named: "candidate", contents: Data("one".utf8))
+        let firstCapability = try RootCapability.open(selectedURL: first.url)
+        let firstBroker = try firstCapability.makeFileBroker(limits: .defaults)
+        let traversal = try await firstBroker.makeTraversal()
+        guard case let .candidate(candidate)? = try await traversal.next() else {
+            return XCTFail("Expected candidate")
+        }
+
+        let second = try TemporaryProjectFixture()
+        defer { second.remove() }
+        _ = try second.regularFile(named: "candidate", contents: Data("two".utf8))
+        let secondCapability = try RootCapability.open(selectedURL: second.url)
+        let secondBroker = try secondCapability.makeFileBroker(limits: .defaults)
+
+        let revalidation = await secondBroker.revalidate(candidate)
+        XCTAssertEqual(revalidation, .rejected(.identityChanged))
     }
 
     func testReadOnlyProjectTraversalNeedsNoWritePermission() async throws {
@@ -276,6 +447,17 @@ final class FileBrokerIntegrationTests: XCTestCase {
         _ = try await traverse(fixture.url)
 
         XCTAssertEqual(try fixture.snapshot(), before)
+    }
+
+    private func makeOrderedBranches(
+        in fixture: TemporaryProjectFixture
+    ) throws -> [URL] {
+        var urlsByName: [Data: URL] = [:]
+        for index in 0..<16 {
+            let name = "branch-\(index)"
+            urlsByName[Data(name.utf8)] = try fixture.directory(named: name)
+        }
+        return try fixture.rootEntryNamesInReadOrder().compactMap { urlsByName[$0] }
     }
 }
 

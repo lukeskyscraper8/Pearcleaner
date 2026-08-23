@@ -70,22 +70,25 @@ public struct FileIdentity: Sendable, Equatable, Hashable {
 fileprivate final class OwnedFileDescriptor: @unchecked Sendable {
     private let lock = NSLock()
     private var value: Int32
+    private let accounting: DescriptorAccounting?
 
-    init(taking value: Int32) throws {
+    init(taking value: Int32, accounting: DescriptorAccounting? = nil) throws {
         guard value >= 0 else { throw ContainmentError.openFailed }
         self.value = value
+        self.accounting = accounting
+        accounting?.retain()
     }
 
     deinit {
         closeIfNeeded()
     }
 
-    func duplicate() throws -> OwnedFileDescriptor {
+    func duplicate(accounting: DescriptorAccounting? = nil) throws -> OwnedFileDescriptor {
         try lock.withLock {
             guard value >= 0 else { throw ContainmentError.closedCapability }
             let duplicate = fcntl(value, F_DUPFD_CLOEXEC, 0)
             guard duplicate >= 0 else { throw ContainmentError.openFailed }
-            return try OwnedFileDescriptor(taking: duplicate)
+            return try OwnedFileDescriptor(taking: duplicate, accounting: accounting)
         }
     }
 
@@ -109,8 +112,29 @@ fileprivate final class OwnedFileDescriptor: @unchecked Sendable {
             if value >= 0 {
                 Darwin.close(value)
                 value = -1
+                accounting?.release()
             }
         }
+    }
+}
+
+fileprivate final class DescriptorAccounting: @unchecked Sendable {
+    private let lock = NSLock()
+    private var openCount: UInt64 = 0
+
+    func retain() {
+        lock.withLock { openCount += 1 }
+    }
+
+    func release() {
+        lock.withLock {
+            precondition(openCount > 0)
+            openCount -= 1
+        }
+    }
+
+    func snapshot() -> UInt64 {
+        lock.withLock { openCount }
     }
 }
 
@@ -181,16 +205,23 @@ enum FileBrokerTestPoint: Sendable, Hashable {
     case afterEntryInspection
     case afterSymlinkInspection
     case afterSymlinkTargetRead
+    case afterProofReplay
 }
 
 actor FileBrokerTestControl {
-    private var armed: Set<FileBrokerTestPoint>
+    private var armed: [FileBrokerTestPoint: UInt64]
+    private var occurrences: [FileBrokerTestPoint: UInt64] = [:]
     private var reached: Set<FileBrokerTestPoint> = []
     private var waiters: [FileBrokerTestPoint: [CheckedContinuation<Void, Never>]] = [:]
     private var resumes: [FileBrokerTestPoint: CheckedContinuation<Void, Never>] = [:]
 
     init(pausingAt points: Set<FileBrokerTestPoint>) {
-        armed = points
+        armed = Dictionary(uniqueKeysWithValues: points.map { ($0, 1) })
+    }
+
+    init(pausingAt point: FileBrokerTestPoint, occurrence: UInt64) {
+        precondition(occurrence > 0)
+        armed = [point: occurrence]
     }
 
     func waitUntilReached(_ point: FileBrokerTestPoint) async {
@@ -201,12 +232,14 @@ actor FileBrokerTestControl {
     }
 
     func resume(_ point: FileBrokerTestPoint) {
-        armed.remove(point)
+        armed.removeValue(forKey: point)
         resumes.removeValue(forKey: point)?.resume()
     }
 
     fileprivate func pauseIfArmed(at point: FileBrokerTestPoint) async {
-        guard armed.contains(point) else { return }
+        let occurrence = occurrences[point, default: 0] + 1
+        occurrences[point] = occurrence
+        guard armed[point] == occurrence else { return }
         reached.insert(point)
         waiters.removeValue(forKey: point)?.forEach { $0.resume() }
         await withCheckedContinuation { continuation in
@@ -220,6 +253,11 @@ enum FileSystemNodeKind: Sendable, Equatable {
     case directory
     case symbolicLink
     case unsupported
+}
+
+enum LinkProbeDecoding: Sendable, Equatable {
+    case accepted(Data)
+    case rejected(CoverageReasonCode)
 }
 
 enum FileBrokerPlatform {
@@ -241,6 +279,16 @@ enum FileBrokerPlatform {
 
     static func linkTargetLengthRejection(byteCount: Int) -> CoverageReasonCode? {
         byteCount <= 4_096 ? nil : .pathTooLong
+    }
+
+    static func decodeLinkProbe(
+        returnedCount: Int,
+        buffer: [UInt8]
+    ) -> LinkProbeDecoding {
+        guard returnedCount >= 0, returnedCount <= 4_096, returnedCount <= buffer.count else {
+            return .rejected(.pathTooLong)
+        }
+        return .accepted(Data(buffer.prefix(returnedCount)))
     }
 
     static func safeLocation(
@@ -274,6 +322,10 @@ fileprivate final class OpenedReadFile: @unchecked Sendable {
     init(descriptor: OwnedFileDescriptor) {
         self.descriptor = descriptor
     }
+
+    func close() {
+        descriptor.closeIfNeeded()
+    }
 }
 
 actor FileBroker {
@@ -282,6 +334,7 @@ actor FileBroker {
     nonisolated let limits: ScanLimits
     private let nonce = UUID()
     private let testControl: FileBrokerTestControl?
+    private let descriptorAccounting = DescriptorAccounting()
     private var traversalIssued = false
 
     fileprivate init(
@@ -300,17 +353,23 @@ actor FileBroker {
         guard !traversalIssued else { throw FileBrokerError.traversalAlreadyIssued }
         traversalIssued = true
         return try FileTraversal(
-            rootDescriptor: rootDescriptor.duplicate(),
+            rootDescriptor: rootDescriptor.duplicate(accounting: descriptorAccounting),
             rootIdentity: rootIdentity,
             limits: limits,
             brokerNonce: nonce,
-            testControl: testControl
+            testControl: testControl,
+            descriptorAccounting: descriptorAccounting
         )
+    }
+
+    func openTraversalDirectoryDescriptorCount() -> UInt64 {
+        descriptorAccounting.snapshot()
     }
 
     func revalidate(_ candidate: FileCandidate) async -> CandidateRevalidation {
         do {
-            _ = try await openForRead(candidate)
+            let opened = try await openForRead(candidate)
+            opened.close()
             return .valid
         } catch let failure as FileAccessFailure {
             return .rejected(failure.reason)
@@ -326,10 +385,20 @@ actor FileBroker {
         for proof in candidate.accessToken.linkProof {
             try replay(proof)
         }
+        await testControl?.pauseIfArmed(at: .afterProofReplay)
+        if Task.isCancelled {
+            throw FileAccessFailure(reason: .cancelled)
+        }
         let descriptor = try openRegularFile(
             physicalComponents: candidate.accessToken.physicalComponents,
             expectedIdentity: candidate.accessToken.expectedIdentity
         )
+        for proof in candidate.accessToken.linkProof {
+            try replay(proof)
+        }
+        if Task.isCancelled {
+            throw FileAccessFailure(reason: .cancelled)
+        }
         return OpenedReadFile(descriptor: descriptor)
     }
 
@@ -350,23 +419,36 @@ actor FileBroker {
         let target = try parent.withFileDescriptor { descriptor in
             try readLink(leaf, relativeTo: descriptor)
         }
-        guard target == proof.targetBytes else {
+        let reinspected = try parent.withFileDescriptor { descriptor in
+            try inspect(leaf, relativeTo: descriptor)
+        }
+        let reread = try parent.withFileDescriptor { descriptor in
+            try readLink(leaf, relativeTo: descriptor)
+        }
+        guard target == proof.targetBytes,
+              reinspected == proof.inspectedIdentity,
+              reread == proof.targetBytes else {
             throw FileAccessFailure(reason: .identityChanged)
         }
     }
 
     private func openDirectory(physicalComponents: [Data]) throws -> OwnedFileDescriptor {
-        var current = try rootDescriptor.duplicate()
+        var current = try rootDescriptor.duplicate(accounting: descriptorAccounting)
         for component in physicalComponents {
+            let inspected = try current.withFileDescriptor { descriptor in
+                try inspect(component, relativeTo: descriptor)
+            }
             let opened = try current.withFileDescriptor { descriptor in
                 try openOwned(
                     component,
                     relativeTo: descriptor,
-                    flags: O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC
+                    flags: O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC,
+                    accounting: descriptorAccounting
                 )
             }
             let identity = try opened.withFileDescriptor(status)
-            guard FileBrokerPlatform.classify(mode: mode_t(identity.mode)) == .directory else {
+            guard sameObjectAndType(inspected, identity),
+                  FileBrokerPlatform.classify(mode: mode_t(identity.mode)) == .directory else {
                 throw FileAccessFailure(reason: .identityChanged)
             }
             guard identity.device == rootIdentity.device else {
@@ -391,7 +473,8 @@ actor FileBroker {
             try openOwned(
                 leaf,
                 relativeTo: descriptor,
-                flags: O_RDONLY | O_NONBLOCK | O_NOFOLLOW | O_CLOEXEC
+                flags: O_RDONLY | O_NONBLOCK | O_NOFOLLOW | O_CLOEXEC,
+                accounting: descriptorAccounting
             )
         }
         let identity = try opened.withFileDescriptor(status)
@@ -408,10 +491,12 @@ actor FileBroker {
 
 actor FileTraversal {
     private var stack: [DirectoryFrame]
+    private let retainedRootDescriptor: OwnedFileDescriptor
     private let rootIdentity: FileIdentity
     private let limits: ScanLimits
     private let brokerNonce: UUID
     private let testControl: FileBrokerTestControl?
+    private let descriptorAccounting: DescriptorAccounting
     private var entriesVisited: UInt64 = 0
     private var directoriesOpened: UInt64 = 1
     private var candidatesProduced: UInt64 = 0
@@ -424,19 +509,23 @@ actor FileTraversal {
         rootIdentity: FileIdentity,
         limits: ScanLimits,
         brokerNonce: UUID,
-        testControl: FileBrokerTestControl?
+        testControl: FileBrokerTestControl?,
+        descriptorAccounting: DescriptorAccounting
     ) throws {
         self.rootIdentity = rootIdentity
         self.limits = limits
         self.brokerNonce = brokerNonce
         self.testControl = testControl
+        self.descriptorAccounting = descriptorAccounting
+        retainedRootDescriptor = try rootDescriptor.duplicate(accounting: descriptorAccounting)
         stack = [try DirectoryFrame(
             descriptor: rootDescriptor,
             logicalComponents: [],
             physicalComponents: [],
             ancestry: [DirectoryIdentity(rootIdentity)],
             linkProof: [],
-            linkHops: 0
+            linkHops: 0,
+            descriptorAccounting: descriptorAccounting
         )]
     }
 
@@ -483,7 +572,7 @@ actor FileTraversal {
             guard logicalComponents.count <= Int(limits.traversalDepth),
                   let logicalPath = try? VerifiedRelativePath(components: logicalComponents),
                   logicalPath.rawByteCount <= limits.relativePathBytes else {
-                return stop(with: safeLocation, reason: .pathTooLong)
+                return emitSkip(safeLocation, reason: .pathTooLong)
             }
 
             let inspected: FileIdentity
@@ -507,6 +596,7 @@ actor FileTraversal {
             switch FileBrokerPlatform.classify(mode: mode_t(inspected.mode)) {
             case .regular:
                 await testControl?.pauseIfArmed(at: .afterEntryInspection)
+                if stopForCancellationIfNeeded() { return nil }
                 return await admitRegular(
                     name: rawName,
                     logicalPath: logicalPath,
@@ -515,6 +605,7 @@ actor FileTraversal {
                 )
             case .directory:
                 await testControl?.pauseIfArmed(at: .afterEntryInspection)
+                if stopForCancellationIfNeeded() { return nil }
                 if let event = await pushDirectory(
                     name: rawName,
                     logicalComponents: logicalComponents,
@@ -526,6 +617,7 @@ actor FileTraversal {
                 }
             case .symbolicLink:
                 await testControl?.pauseIfArmed(at: .afterSymlinkInspection)
+                if stopForCancellationIfNeeded() { return nil }
                 if let event = await resolveLink(
                     name: rawName,
                     logicalComponents: logicalComponents,
@@ -541,6 +633,7 @@ actor FileTraversal {
         }
 
         isFinished = true
+        retainedRootDescriptor.closeIfNeeded()
         return nil
     }
 
@@ -568,15 +661,13 @@ actor FileTraversal {
         inspected: FileIdentity,
         frame: DirectoryFrame
     ) async -> TraversalEvent {
-        guard candidatesProduced < limits.generalFiles else {
-            return stop(with: .verified(logicalPath), reason: .entryBudget)
-        }
         do {
             let opened = try frame.withFileDescriptor { descriptor in
                 try openOwned(
                     name,
                     relativeTo: descriptor,
-                    flags: O_RDONLY | O_NONBLOCK | O_NOFOLLOW | O_CLOEXEC
+                    flags: O_RDONLY | O_NONBLOCK | O_NOFOLLOW | O_CLOEXEC,
+                    accounting: descriptorAccounting
                 )
             }
             let identity = try opened.withFileDescriptor(status)
@@ -625,9 +716,10 @@ actor FileTraversal {
         do {
             let opened = try frame.withFileDescriptor { descriptor in
                 try openOwned(
-                    name,
-                    relativeTo: descriptor,
-                    flags: O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC
+                name,
+                relativeTo: descriptor,
+                flags: O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC,
+                accounting: descriptorAccounting
                 )
             }
             let identity = try opened.withFileDescriptor(status)
@@ -644,7 +736,8 @@ actor FileTraversal {
                 physicalComponents: frame.physicalComponents + [name],
                 ancestry: frame.ancestry + [DirectoryIdentity(identity)],
                 linkProof: frame.linkProof,
-                linkHops: frame.linkHops
+                linkHops: frame.linkHops,
+                descriptorAccounting: descriptorAccounting
             ))
             directoriesOpened += 1
             return nil
@@ -695,6 +788,17 @@ actor FileTraversal {
             proofs: frame.linkProof + [proof],
             linkHops: nextHops
         )
+        if stopForCancellationIfNeeded() { return nil }
+
+        do {
+            for proof in result.proofs {
+                try replay(proof)
+            }
+        } catch let failure as FileAccessFailure {
+            return emitSkip(.verified(logicalPath), reason: failure.reason)
+        } catch {
+            return emitSkip(.verified(logicalPath), reason: .identityChanged)
+        }
 
         do {
             let currentIdentity = try frame.withFileDescriptor { descriptor in
@@ -712,9 +816,6 @@ actor FileTraversal {
 
         switch result {
         case let .regular(identity, physicalComponents, proofs):
-            guard candidatesProduced < limits.generalFiles else {
-                return stop(with: .verified(logicalPath), reason: .entryBudget)
-            }
             candidatesProduced += 1
             return .candidate(FileCandidate(
                 logicalPath: logicalPath,
@@ -741,7 +842,8 @@ actor FileTraversal {
                     physicalComponents: physicalComponents,
                     ancestry: ancestry,
                     linkProof: proofs,
-                    linkHops: hops
+                    linkHops: hops,
+                    descriptorAccounting: descriptorAccounting
                 ))
                 directoriesOpened += 1
                 return nil
@@ -762,7 +864,7 @@ actor FileTraversal {
         var pending = splitLinkTarget(target)
         var current: OwnedFileDescriptor
         do {
-            current = try frame.duplicateOwnedDescriptor()
+            current = try frame.duplicateOwnedDescriptor(accounting: descriptorAccounting)
         } catch {
             return .skipped(.unreadable)
         }
@@ -772,6 +874,7 @@ actor FileTraversal {
         var hops = initialHops
 
         while !pending.isEmpty {
+            if stopForCancellationIfNeeded() { return .skipped(.cancelled) }
             let component = pending.removeFirst()
             if component.isEmpty || component == Data(".".utf8) { continue }
             if component == Data("..".utf8) {
@@ -783,7 +886,8 @@ actor FileTraversal {
                         try openOwned(
                             Data("..".utf8),
                             relativeTo: descriptor,
-                            flags: O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC
+                            flags: O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC,
+                            accounting: descriptorAccounting
                         )
                     }
                     let identity = try parent.withFileDescriptor(status)
@@ -801,6 +905,10 @@ actor FileTraversal {
             guard (try? VerifiedPathComponent(bytes: component)) != nil else {
                 return .skipped(.pathTooLong)
             }
+            guard physicalComponents.count < Int(limits.traversalDepth),
+                  physicalPathByteCount(physicalComponents + [component]) <= limits.relativePathBytes else {
+                return .skipped(.pathTooLong)
+            }
 
             let inspected: FileIdentity
             do {
@@ -814,6 +922,11 @@ actor FileTraversal {
             }
             guard inspected.device == rootIdentity.device else {
                 return .skipped(.mountBoundary)
+            }
+
+            if proofs.count == initialProofs.count {
+                await testControl?.pauseIfArmed(at: .afterSymlinkTargetRead)
+                if stopForCancellationIfNeeded() { return .skipped(.cancelled) }
             }
 
             switch FileBrokerPlatform.classify(mode: mode_t(inspected.mode)) {
@@ -856,17 +969,33 @@ actor FileTraversal {
                     inspectedIdentity: inspected,
                     targetBytes: nestedTarget
                 ))
+                await testControl?.pauseIfArmed(at: .afterSymlinkTargetRead)
+                if stopForCancellationIfNeeded() { return .skipped(.cancelled) }
+                do {
+                    let afterPauseIdentity = try current.withFileDescriptor { descriptor in
+                        try inspect(component, relativeTo: descriptor)
+                    }
+                    let afterPauseTarget = try current.withFileDescriptor { descriptor in
+                        try readLink(component, relativeTo: descriptor)
+                    }
+                    guard afterPauseIdentity == inspected,
+                          afterPauseTarget == nestedTarget else {
+                        return .skipped(.identityChanged)
+                    }
+                } catch let failure as FileAccessFailure {
+                    return .skipped(failure.reason)
+                } catch {
+                    return .skipped(.identityChanged)
+                }
                 pending = splitLinkTarget(nestedTarget) + pending
             case .directory:
                 do {
-                    if pending.isEmpty {
-                        await testControl?.pauseIfArmed(at: .afterSymlinkTargetRead)
-                    }
                     let opened = try current.withFileDescriptor { descriptor in
                         try openOwned(
                             component,
                             relativeTo: descriptor,
-                            flags: O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC
+                            flags: O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC,
+                            accounting: descriptorAccounting
                         )
                     }
                     let identity = try opened.withFileDescriptor(status)
@@ -894,12 +1023,12 @@ actor FileTraversal {
             case .regular:
                 guard pending.isEmpty else { return .skipped(.externalBoundary) }
                 do {
-                    await testControl?.pauseIfArmed(at: .afterSymlinkTargetRead)
                     let opened = try current.withFileDescriptor { descriptor in
                         try openOwned(
                             component,
                             relativeTo: descriptor,
-                            flags: O_RDONLY | O_NONBLOCK | O_NOFOLLOW | O_CLOEXEC
+                            flags: O_RDONLY | O_NONBLOCK | O_NOFOLLOW | O_CLOEXEC,
+                            accounting: descriptorAccounting
                         )
                     }
                     let identity = try opened.withFileDescriptor(status)
@@ -959,6 +1088,57 @@ actor FileTraversal {
         let frames = stack
         stack.removeAll(keepingCapacity: false)
         frames.forEach { $0.close() }
+        retainedRootDescriptor.closeIfNeeded()
+    }
+
+    private func stopForCancellationIfNeeded() -> Bool {
+        guard isCancelled || Task.isCancelled else { return false }
+        cancel()
+        return true
+    }
+
+    private func replay(_ proof: LinkProof) throws {
+        guard let leaf = proof.physicalComponents.last else {
+            throw FileAccessFailure(reason: .identityChanged)
+        }
+        var current = try retainedRootDescriptor.duplicate(accounting: descriptorAccounting)
+        for component in proof.physicalComponents.dropLast() {
+            let inspected = try current.withFileDescriptor { descriptor in
+                try inspect(component, relativeTo: descriptor)
+            }
+            let opened = try current.withFileDescriptor { descriptor in
+                try openOwned(
+                    component,
+                    relativeTo: descriptor,
+                    flags: O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC,
+                    accounting: descriptorAccounting
+                )
+            }
+            let identity = try opened.withFileDescriptor(status)
+            guard sameObjectAndType(inspected, identity),
+                  FileBrokerPlatform.classify(mode: mode_t(identity.mode)) == .directory else {
+                throw FileAccessFailure(reason: .identityChanged)
+            }
+            current = opened
+        }
+        let inspected = try current.withFileDescriptor { descriptor in
+            try inspect(leaf, relativeTo: descriptor)
+        }
+        let target = try current.withFileDescriptor { descriptor in
+            try readLink(leaf, relativeTo: descriptor)
+        }
+        let reinspected = try current.withFileDescriptor { descriptor in
+            try inspect(leaf, relativeTo: descriptor)
+        }
+        let reread = try current.withFileDescriptor { descriptor in
+            try readLink(leaf, relativeTo: descriptor)
+        }
+        guard inspected == proof.inspectedIdentity,
+              target == proof.targetBytes,
+              reinspected == proof.inspectedIdentity,
+              reread == proof.targetBytes else {
+            throw FileAccessFailure(reason: .identityChanged)
+        }
     }
 }
 
@@ -978,6 +1158,7 @@ fileprivate final class DirectoryFrame: @unchecked Sendable {
     let ancestry: [DirectoryIdentity]
     let linkProof: [LinkProof]
     let linkHops: UInt32
+    private let descriptorAccounting: DescriptorAccounting
     private let lock = NSLock()
     private var cursor: UnsafeMutablePointer<DIR>?
 
@@ -987,11 +1168,13 @@ fileprivate final class DirectoryFrame: @unchecked Sendable {
         physicalComponents: [Data],
         ancestry: [DirectoryIdentity],
         linkProof: [LinkProof],
-        linkHops: UInt32
+        linkHops: UInt32,
+        descriptorAccounting: DescriptorAccounting
     ) throws {
         let raw = try descriptor.take()
         guard let opened = fdopendir(raw) else {
             Darwin.close(raw)
+            descriptorAccounting.release()
             throw FileAccessFailure(reason: .unreadable)
         }
         cursor = opened
@@ -1000,6 +1183,7 @@ fileprivate final class DirectoryFrame: @unchecked Sendable {
         self.ancestry = ancestry
         self.linkProof = linkProof
         self.linkHops = linkHops
+        self.descriptorAccounting = descriptorAccounting
     }
 
     deinit {
@@ -1033,11 +1217,11 @@ fileprivate final class DirectoryFrame: @unchecked Sendable {
         }
     }
 
-    func duplicateOwnedDescriptor() throws -> OwnedFileDescriptor {
+    func duplicateOwnedDescriptor(accounting: DescriptorAccounting) throws -> OwnedFileDescriptor {
         try withFileDescriptor { descriptor in
             let duplicate = fcntl(descriptor, F_DUPFD_CLOEXEC, 0)
             guard duplicate >= 0 else { throw FileAccessFailure(reason: .unreadable) }
-            return try OwnedFileDescriptor(taking: duplicate)
+            return try OwnedFileDescriptor(taking: duplicate, accounting: accounting)
         }
     }
 
@@ -1046,6 +1230,7 @@ fileprivate final class DirectoryFrame: @unchecked Sendable {
             guard let cursor else { return }
             closedir(cursor)
             self.cursor = nil
+            descriptorAccounting.release()
         }
     }
 }
@@ -1061,6 +1246,14 @@ fileprivate enum ResolvedTarget {
         UInt32
     )
     case skipped(CoverageReasonCode)
+
+    var proofs: [LinkProof] {
+        switch self {
+        case let .regular(_, _, proofs): proofs
+        case let .directory(_, _, _, _, proofs, _): proofs
+        case .skipped: []
+        }
+    }
 }
 
 fileprivate struct FileAccessFailure: Error {
@@ -1110,7 +1303,8 @@ fileprivate func inspect(_ name: Data, relativeTo descriptor: Int32) throws -> F
 fileprivate func openOwned(
     _ name: Data,
     relativeTo descriptor: Int32,
-    flags: Int32
+    flags: Int32,
+    accounting: DescriptorAccounting? = nil
 ) throws -> OwnedFileDescriptor {
     try name.withNullTerminatedBytes { pointer in
         let opened = openat(descriptor, pointer, flags)
@@ -1124,7 +1318,7 @@ fileprivate func openOwned(
             }
             throw FileAccessFailure(reason: reason)
         }
-        return try OwnedFileDescriptor(taking: opened)
+        return try OwnedFileDescriptor(taking: opened, accounting: accounting)
     }
 }
 
@@ -1136,15 +1330,25 @@ fileprivate func readLink(_ name: Data, relativeTo descriptor: Int32) throws -> 
             let reason: CoverageReasonCode = errno == ENOENT ? .identityChanged : .unreadable
             throw FileAccessFailure(reason: reason)
         }
-        if let reason = FileBrokerPlatform.linkTargetLengthRejection(byteCount: count) {
+        switch FileBrokerPlatform.decodeLinkProbe(returnedCount: count, buffer: buffer) {
+        case let .accepted(target):
+            return target
+        case let .rejected(reason):
             throw FileAccessFailure(reason: reason)
         }
-        return Data(buffer.prefix(count))
     }
 }
 
 fileprivate func splitLinkTarget(_ target: Data) -> [Data] {
     target.split(separator: UInt8(ascii: "/"), omittingEmptySubsequences: false).map(Data.init)
+}
+
+fileprivate func physicalPathByteCount(_ components: [Data]) -> UInt64 {
+    guard !components.isEmpty else { return 0 }
+    let bytes = components.reduce(UInt64(components.count - 1)) { partial, component in
+        partial + UInt64(component.count)
+    }
+    return bytes
 }
 
 fileprivate extension Data {

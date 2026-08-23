@@ -56,6 +56,27 @@ final class FileBrokerRaceTests: XCTestCase {
         XCTAssertTrue(skips(in: events).contains { $0.1 == .identityChanged })
     }
 
+    func testRegularEntryReplacedByDifferentRegularBeforeOpenIsRejected() async throws {
+        let fixture = try TemporaryProjectFixture()
+        defer { fixture.remove() }
+        let file = try fixture.regularFile(named: "race", contents: Data("old".utf8))
+        guard try await traversalIsOperational(fixture) else { return }
+        let control = FileBrokerTestControl(pausingAt: [.afterEntryInspection])
+        let rootURL = fixture.url
+        let task = Task { try await traverseWithControl(rootURL, control: control) }
+        await control.waitUntilReached(.afterEntryInspection)
+        try FileManager.default.removeItem(at: file)
+        _ = try fixture.regularFile(named: "race", contents: Data("different".utf8))
+        await control.resume(.afterEntryInspection)
+
+        let events = try await task.value
+
+        XCTAssertTrue(skips(in: events).contains {
+            path(of: $0.0) == "race" && $0.1 == .identityChanged
+        })
+        XCTAssertFalse(candidatePaths(in: events).contains("race"))
+    }
+
     func testRelativeLinkTargetReplacementBeforeOpenIsRejected() async throws {
         let fixture = try TemporaryProjectFixture()
         defer { fixture.remove() }
@@ -96,6 +117,65 @@ final class FileBrokerRaceTests: XCTestCase {
         XCTAssertTrue(skips(in: events).contains {
             path(of: $0.0) == "link" && $0.1 == .identityChanged
         })
+    }
+
+    func testNestedLinkRetargetBetweenProofAndFinalOpenIsRejected() async throws {
+        let fixture = try TemporaryProjectFixture()
+        defer { fixture.remove() }
+        _ = try fixture.regularFile(named: "first", contents: Data("first".utf8))
+        _ = try fixture.regularFile(named: "second", contents: Data("second".utf8))
+        let nested = fixture.url.appendingPathComponent("nested")
+        try fixture.symbolicLink(at: fixture.url.appendingPathComponent("outer"), target: "nested")
+        try fixture.symbolicLink(at: nested, target: "first")
+        guard try await traversalIsOperational(fixture) else { return }
+        let control = FileBrokerTestControl(
+            pausingAt: .afterSymlinkTargetRead,
+            occurrence: 2
+        )
+        let rootURL = fixture.url
+        let task = Task { try await traverseWithControl(rootURL, control: control) }
+        await control.waitUntilReached(.afterSymlinkTargetRead)
+        try FileManager.default.removeItem(at: nested)
+        try fixture.symbolicLink(at: nested, target: "second")
+        await control.resume(.afterSymlinkTargetRead)
+
+        let events = try await task.value
+
+        XCTAssertTrue(skips(in: events).contains {
+            path(of: $0.0) == "outer" && $0.1 == .identityChanged
+        })
+        XCTAssertFalse(candidatePaths(in: events).contains("outer"))
+    }
+
+    func testNestedLinkRetargetAfterFirstBrokerProofReplayIsRejected() async throws {
+        let fixture = try TemporaryProjectFixture()
+        defer { fixture.remove() }
+        _ = try fixture.regularFile(named: "first", contents: Data("first".utf8))
+        _ = try fixture.regularFile(named: "second", contents: Data("second".utf8))
+        let nested = fixture.url.appendingPathComponent("nested")
+        try fixture.symbolicLink(at: nested, target: "first")
+        try fixture.symbolicLink(at: fixture.url.appendingPathComponent("outer"), target: "nested")
+        let control = FileBrokerTestControl(pausingAt: [.afterProofReplay])
+        let capability = try RootCapability.open(selectedURL: fixture.url)
+        let broker = try capability.makeFileBroker(limits: .defaults, testControl: control)
+        let traversal = try await broker.makeTraversal()
+        var outer: FileCandidate?
+        while let event = try await traversal.next() {
+            if case let .candidate(candidate) = event,
+               candidate.logicalPath.escapedForDisplay().text == "outer" {
+                outer = candidate
+            }
+        }
+        guard let outer else { return XCTFail("Expected outer candidate") }
+
+        let validation = Task { await broker.revalidate(outer) }
+        await control.waitUntilReached(.afterProofReplay)
+        try FileManager.default.removeItem(at: nested)
+        try fixture.symbolicLink(at: nested, target: "second")
+        await control.resume(.afterProofReplay)
+
+        let result = await validation.value
+        XCTAssertEqual(result, .rejected(.identityChanged))
     }
 
     func testEntryVanishingAfterReaddirProducesTypedSkip() async throws {
@@ -140,19 +220,31 @@ final class FileBrokerRaceTests: XCTestCase {
             atPath: parent.appendingPathComponent("inside").path,
             contents: Data("inside".utf8)
         ))
+        try fixture.symbolicLink(
+            at: parent.appendingPathComponent("inside-link"),
+            target: "inside"
+        )
         guard try await traversalIsOperational(fixture) else { return }
-        let control = FileBrokerTestControl(pausingAt: [.afterEntryInspection])
+        let control = FileBrokerTestControl(pausingAt: [.afterSymlinkInspection])
         let rootURL = fixture.url
         let task = Task { try await traverseWithControl(rootURL, control: control) }
-        await control.waitUntilReached(.afterEntryInspection)
+        await control.waitUntilReached(.afterSymlinkInspection)
         let moved = fixture.url.appendingPathComponent("moved", isDirectory: true)
         try FileManager.default.moveItem(at: parent, to: moved)
         try fixture.symbolicLink(at: parent, target: fixture.outsideCanaryURL.path)
-        await control.resume(.afterEntryInspection)
+        await control.resume(.afterSymlinkInspection)
         let events = try await task.value
         let outsideIdentity = try fixture.identity(of: fixture.outsideCanaryURL)
 
-        XCTAssertFalse(candidateEvents(in: events).contains { $0.identity.inode == outsideIdentity.inode })
+        XCTAssertFalse(candidateEvents(in: events).contains { $0.identity == outsideIdentity })
+        XCTAssertTrue(events.contains {
+            switch $0 {
+            case let .candidate(candidate):
+                candidate.logicalPath.escapedForDisplay().text == "parent/inside-link"
+            case let .skipped(location, _):
+                path(of: location) == "parent/inside-link"
+            }
+        })
     }
 
     func testOutsideCanaryIsNeverReturnedDuringBoundedRenameRace() async throws {
@@ -162,24 +254,35 @@ final class FileBrokerRaceTests: XCTestCase {
         guard try await traversalIsOperational(fixture) else { return }
         let outsideIdentity = try fixture.identity(of: fixture.outsideCanaryURL)
 
-        let stableURL = stable
         let outsideURL = fixture.outsideCanaryURL
         for _ in 0..<1_000 {
             let capability = try RootCapability.open(selectedURL: fixture.url)
-            let broker = try capability.makeFileBroker(limits: .defaults)
+            let control = FileBrokerTestControl(pausingAt: [.afterEntryInspection])
+            let broker = try capability.makeFileBroker(limits: .defaults, testControl: control)
             let traversal = try await broker.makeTraversal()
             let replacement = fixture.url.appendingPathComponent("replacement")
-            let race = Task {
-                try? FileManager.default.removeItem(at: replacement)
-                try? FileManager.default.moveItem(at: stableURL, to: replacement)
-                try? FileManager.default.createSymbolicLink(at: stableURL, withDestinationURL: outsideURL)
-                try? FileManager.default.removeItem(at: stableURL)
-                try? FileManager.default.moveItem(at: replacement, to: stableURL)
+            let next = Task { try await traversal.next() }
+            await control.waitUntilReached(.afterEntryInspection)
+            let replacementAttempt = Task {
+                try FileManager.default.moveItem(at: stable, to: replacement)
+                try FileManager.default.createSymbolicLink(at: stable, withDestinationURL: outsideURL)
             }
-            let event = try await traversal.next()
-            _ = await race.result
-            if case let .candidate(candidate)? = event {
-                XCTAssertNotEqual(candidate.identity.inode, outsideIdentity.inode)
+            try await replacementAttempt.value
+            await control.resume(.afterEntryInspection)
+            let event = try await next.value
+            try FileManager.default.removeItem(at: stable)
+            try FileManager.default.moveItem(at: replacement, to: stable)
+            guard let event else {
+                XCTFail("Every stress iteration must produce a candidate or typed skip")
+                await traversal.cancel()
+                continue
+            }
+            switch event {
+            case let .candidate(candidate):
+                XCTAssertNotEqual(candidate.identity, outsideIdentity)
+            case let .skipped(location, reason):
+                XCTAssertEqual(path(of: location), "stable")
+                XCTAssertEqual(reason, .identityChanged)
             }
             await traversal.cancel()
         }
@@ -207,7 +310,10 @@ final class FileBrokerRaceTests: XCTestCase {
         let capability = try RootCapability.open(selectedURL: fixture.url)
         let broker = try capability.makeFileBroker(limits: .defaults, testControl: control)
         let traversal = try await broker.makeTraversal()
-        let next = Task { try await traversal.next() }
+        let next = Task {
+            while try await traversal.next() != nil {}
+            return Optional<TraversalEvent>.none
+        }
         await control.waitUntilReached(.afterDirectoryEntryRead)
         let activeSummary = await traversal.summary()
         XCTAssertGreaterThan(activeSummary.openDirectoryDescriptorCount, 0)
@@ -221,6 +327,167 @@ final class FileBrokerRaceTests: XCTestCase {
         let cancelledSummary = await traversal.summary()
         XCTAssertEqual(cancelledSummary.openDirectoryDescriptorCount, 0)
         XCTAssertTrue(cancelledSummary.cancelled)
+    }
+
+    func testBrokerDescriptorAccountingReturnsToZeroAfterCompletionAndError() async throws {
+        let fixture = try TemporaryProjectFixture()
+        defer { fixture.remove() }
+        _ = try fixture.regularFile(named: "peer")
+        let unreadable = try fixture.directory(named: "unreadable")
+        guard chmod(unreadable.path, 0) == 0 else { return XCTFail("chmod failed") }
+        defer { _ = chmod(unreadable.path, S_IRUSR | S_IWUSR | S_IXUSR) }
+        let capability = try RootCapability.open(selectedURL: fixture.url)
+        let broker = try capability.makeFileBroker(limits: .defaults)
+        let traversal = try await broker.makeTraversal()
+        let activeCount = await broker.openTraversalDirectoryDescriptorCount()
+        XCTAssertGreaterThan(activeCount, 0)
+
+        while try await traversal.next() != nil {}
+
+        let finishedCount = await broker.openTraversalDirectoryDescriptorCount()
+        XCTAssertEqual(finishedCount, 0)
+    }
+
+    func testBrokerDescriptorAccountingReturnsToZeroAfterExplicitCancellation() async throws {
+        let fixture = try TemporaryProjectFixture()
+        defer { fixture.remove() }
+        _ = try fixture.regularFile(named: "peer")
+        let capability = try RootCapability.open(selectedURL: fixture.url)
+        let broker = try capability.makeFileBroker(limits: .defaults)
+        let traversal = try await broker.makeTraversal()
+        let activeCount = await broker.openTraversalDirectoryDescriptorCount()
+        XCTAssertGreaterThan(activeCount, 0)
+
+        await traversal.cancel()
+
+        let cancelledCount = await broker.openTraversalDirectoryDescriptorCount()
+        XCTAssertEqual(cancelledCount, 0)
+    }
+
+    func testDroppingLiveTraversalClosesBrokerAccountedDescriptors() async throws {
+        let fixture = try TemporaryProjectFixture()
+        defer { fixture.remove() }
+        _ = try fixture.regularFile(named: "peer")
+        let capability = try RootCapability.open(selectedURL: fixture.url)
+        let broker = try capability.makeFileBroker(limits: .defaults)
+        var traversal: FileTraversal? = try await broker.makeTraversal()
+        XCTAssertNotNil(traversal)
+        let activeCount = await broker.openTraversalDirectoryDescriptorCount()
+        XCTAssertGreaterThan(activeCount, 0)
+
+        traversal = nil
+        for _ in 0..<100 {
+            guard await broker.openTraversalDirectoryDescriptorCount() != 0 else { break }
+            await Task.yield()
+        }
+
+        let abandonedCount = await broker.openTraversalDirectoryDescriptorCount()
+        XCTAssertEqual(abandonedCount, 0)
+    }
+
+    func testExplicitCancellationAtEveryTraversalSuspensionStopsWithoutYielding() async throws {
+        try await assertExplicitCancellation(
+            point: .afterEntryInspection,
+            setup: { fixture in _ = try fixture.regularFile(named: "regular") }
+        )
+        try await assertExplicitCancellation(
+            point: .afterEntryInspection,
+            setup: { fixture in _ = try fixture.directory(named: "directory") }
+        )
+        try await assertExplicitCancellation(
+            point: .afterSymlinkInspection,
+            setup: { fixture in
+                _ = try fixture.regularFile(named: "target")
+                try fixture.symbolicLink(at: fixture.url.appendingPathComponent("link"), target: "target")
+            }
+        )
+        try await assertExplicitCancellation(
+            point: .afterSymlinkTargetRead,
+            setup: { fixture in
+                _ = try fixture.regularFile(named: "target")
+                try fixture.symbolicLink(at: fixture.url.appendingPathComponent("link"), target: "target")
+            }
+        )
+    }
+
+    func testTaskCancellationAfterEntryInspectionStopsWithoutYielding() async throws {
+        let fixture = try TemporaryProjectFixture()
+        defer { fixture.remove() }
+        _ = try fixture.regularFile(named: "regular")
+        let control = FileBrokerTestControl(pausingAt: [.afterEntryInspection])
+        let capability = try RootCapability.open(selectedURL: fixture.url)
+        let broker = try capability.makeFileBroker(limits: .defaults, testControl: control)
+        let traversal = try await broker.makeTraversal()
+        let next = Task { try await traversal.next() }
+        await control.waitUntilReached(.afterEntryInspection)
+
+        next.cancel()
+        await control.resume(.afterEntryInspection)
+
+        let event = try await next.value
+        let descriptorCount = await broker.openTraversalDirectoryDescriptorCount()
+        XCTAssertNil(event)
+        XCTAssertEqual(descriptorCount, 0)
+    }
+
+    func testCancellationDuringSymlinkResolutionClosesTransientDescriptor() async throws {
+        let fixture = try TemporaryProjectFixture()
+        defer { fixture.remove() }
+        _ = try fixture.regularFile(named: "target")
+        try fixture.symbolicLink(at: fixture.url.appendingPathComponent("link"), target: "target")
+        let control = FileBrokerTestControl(pausingAt: [.afterSymlinkTargetRead])
+        let capability = try RootCapability.open(selectedURL: fixture.url)
+        let broker = try capability.makeFileBroker(limits: .defaults, testControl: control)
+        let traversal = try await broker.makeTraversal()
+        let next = Task {
+            while let event = try await traversal.next() {
+                if case let .candidate(candidate) = event,
+                   candidate.logicalPath.escapedForDisplay().text == "link" {
+                    return Optional<TraversalEvent>.some(event)
+                }
+            }
+            return nil
+        }
+        await control.waitUntilReached(.afterSymlinkTargetRead)
+        let suspendedCount = await broker.openTraversalDirectoryDescriptorCount()
+        XCTAssertGreaterThan(suspendedCount, 1)
+
+        await traversal.cancel()
+        await control.resume(.afterSymlinkTargetRead)
+
+        let event = try await next.value
+        let descriptorCount = await broker.openTraversalDirectoryDescriptorCount()
+        XCTAssertNil(event)
+        XCTAssertEqual(descriptorCount, 0)
+    }
+
+    func testTaskCancellationAtBrokerProofReplayRejectsAndCloses() async throws {
+        let fixture = try TemporaryProjectFixture()
+        defer { fixture.remove() }
+        _ = try fixture.regularFile(named: "target", contents: Data("value".utf8))
+        try fixture.symbolicLink(at: fixture.url.appendingPathComponent("link"), target: "target")
+        let control = FileBrokerTestControl(pausingAt: [.afterProofReplay])
+        let capability = try RootCapability.open(selectedURL: fixture.url)
+        let broker = try capability.makeFileBroker(limits: .defaults, testControl: control)
+        let traversal = try await broker.makeTraversal()
+        var link: FileCandidate?
+        while let event = try await traversal.next() {
+            if case let .candidate(candidate) = event,
+               candidate.logicalPath.escapedForDisplay().text == "link" {
+                link = candidate
+            }
+        }
+        guard let link else { return XCTFail("Expected link candidate") }
+
+        let validation = Task { await broker.revalidate(link) }
+        await control.waitUntilReached(.afterProofReplay)
+        validation.cancel()
+        await control.resume(.afterProofReplay)
+
+        let result = await validation.value
+        let descriptorCount = await broker.openTraversalDirectoryDescriptorCount()
+        XCTAssertEqual(result, .rejected(.cancelled))
+        XCTAssertEqual(descriptorCount, 0)
     }
 
     private func operationalCandidate(
@@ -250,6 +517,32 @@ final class FileBrokerRaceTests: XCTestCase {
             return false
         }
         return true
+    }
+
+    private func assertExplicitCancellation(
+        point: FileBrokerTestPoint,
+        setup: (TemporaryProjectFixture) throws -> Void
+    ) async throws {
+        let fixture = try TemporaryProjectFixture()
+        defer { fixture.remove() }
+        try setup(fixture)
+        let control = FileBrokerTestControl(pausingAt: [point])
+        let capability = try RootCapability.open(selectedURL: fixture.url)
+        let broker = try capability.makeFileBroker(limits: .defaults, testControl: control)
+        let traversal = try await broker.makeTraversal()
+        let next = Task {
+            while try await traversal.next() != nil {}
+            return Optional<TraversalEvent>.none
+        }
+        await control.waitUntilReached(point)
+
+        await traversal.cancel()
+        await control.resume(point)
+
+        let event = try await next.value
+        let descriptorCount = await broker.openTraversalDirectoryDescriptorCount()
+        XCTAssertNil(event)
+        XCTAssertEqual(descriptorCount, 0)
     }
 }
 

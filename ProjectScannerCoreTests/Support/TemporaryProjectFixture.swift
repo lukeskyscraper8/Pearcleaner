@@ -101,8 +101,12 @@ final class TemporaryProjectFixture {
         }
     }
 
-    func rawDirectoryChain(_ componentNames: [Data]) throws {
-        var current = try openDirectory(url)
+    func rawDirectoryChain(
+        _ componentNames: [Data],
+        parent: URL? = nil,
+        finalFileName: Data? = nil
+    ) throws {
+        var current = try openDirectory(parent ?? url)
         defer { Darwin.close(current) }
         for component in componentNames {
             let child = try component.withNullTerminatedFileSystemBytes { name -> Int32 in
@@ -115,6 +119,99 @@ final class TemporaryProjectFixture {
             }
             Darwin.close(current)
             current = child
+        }
+        if let finalFileName {
+            try createRawRegularFile(
+                named: finalFileName,
+                relativeTo: current,
+                contents: Data("inside".utf8)
+            )
+        }
+    }
+
+    func rootEntryNamesInReadOrder() throws -> [Data] {
+        let descriptor = try openDirectory(url)
+        guard let cursor = fdopendir(descriptor) else {
+            Darwin.close(descriptor)
+            throw CocoaError(.fileReadUnknown)
+        }
+        defer { closedir(cursor) }
+        var names: [Data] = []
+        while let entry = readdir(cursor) {
+            var name = entry.pointee.d_name
+            let bytes = withUnsafeBytes(of: &name) { raw -> Data in
+                let count = raw.firstIndex(of: 0) ?? raw.count
+                return Data(raw.prefix(count))
+            }
+            guard bytes != Data(".".utf8), bytes != Data("..".utf8) else { continue }
+            names.append(bytes)
+        }
+        return names
+    }
+
+    func rawNestedLinkPath(
+        componentGroups: [[Data]],
+        outerLinkName: Data,
+        hopLinkName: Data,
+        finalFileName: Data
+    ) throws {
+        precondition(!componentGroups.isEmpty)
+        let root = try openDirectory(url)
+        defer { Darwin.close(root) }
+        var linkParent = root
+        var ownsLinkParent = false
+        defer {
+            if ownsLinkParent { Darwin.close(linkParent) }
+        }
+
+        for (index, group) in componentGroups.enumerated() {
+            let isLast = index == componentGroups.count - 1
+            let linkName = index == 0 ? outerLinkName : hopLinkName
+            let destinationLeaf = isLast ? finalFileName : hopLinkName
+            let target = (group + [destinationLeaf])
+                .enumerated()
+                .reduce(into: Data()) { result, item in
+                    if item.offset > 0 { result.append(UInt8(ascii: "/")) }
+                    result.append(item.element)
+                }
+            try createRawSymbolicLink(
+                named: linkName,
+                target: target,
+                relativeTo: linkParent
+            )
+
+            var current = linkParent
+            var ownsCurrent = false
+            for component in group {
+                let child = try component.withNullTerminatedFileSystemBytes { name -> Int32 in
+                    guard mkdirat(current, name, S_IRUSR | S_IWUSR | S_IXUSR) == 0 else {
+                        throw CocoaError(.fileWriteUnknown)
+                    }
+                    let opened = openat(
+                        current,
+                        name,
+                        O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC
+                    )
+                    guard opened >= 0 else { throw CocoaError(.fileReadUnknown) }
+                    return opened
+                }
+                if ownsCurrent { Darwin.close(current) }
+                current = child
+                ownsCurrent = true
+            }
+
+            if isLast {
+                try createRawRegularFile(
+                    named: finalFileName,
+                    relativeTo: current,
+                    contents: Data("inside".utf8)
+                )
+                if ownsCurrent { Darwin.close(current) }
+            } else {
+                if ownsLinkParent { Darwin.close(linkParent) }
+                linkParent = current
+                ownsLinkParent = ownsCurrent
+            }
         }
     }
 
@@ -275,6 +372,51 @@ final class TemporaryProjectFixture {
         let descriptor = open(directory.path, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC)
         guard descriptor >= 0 else { throw CocoaError(.fileReadUnknown) }
         return descriptor
+    }
+
+    private func createRawRegularFile(
+        named nameBytes: Data,
+        relativeTo parentDescriptor: Int32,
+        contents: Data
+    ) throws {
+        try nameBytes.withNullTerminatedFileSystemBytes { name in
+            let descriptor = openat(
+                parentDescriptor,
+                name,
+                O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC,
+                S_IRUSR | S_IWUSR
+            )
+            guard descriptor >= 0 else { throw CocoaError(.fileWriteUnknown) }
+            defer { Darwin.close(descriptor) }
+            if !contents.isEmpty {
+                try contents.withUnsafeBytes { buffer in
+                    var offset = 0
+                    while offset < buffer.count {
+                        let count = Darwin.write(
+                            descriptor,
+                            buffer.baseAddress!.advanced(by: offset),
+                            buffer.count - offset
+                        )
+                        guard count > 0 else { throw CocoaError(.fileWriteUnknown) }
+                        offset += count
+                    }
+                }
+            }
+        }
+    }
+
+    private func createRawSymbolicLink(
+        named nameBytes: Data,
+        target targetBytes: Data,
+        relativeTo parentDescriptor: Int32
+    ) throws {
+        try nameBytes.withNullTerminatedFileSystemBytes { name in
+            try targetBytes.withNullTerminatedFileSystemBytes { target in
+                guard symlinkat(target, parentDescriptor, name) == 0 else {
+                    throw CocoaError(.fileWriteUnknown)
+                }
+            }
+        }
     }
 }
 
