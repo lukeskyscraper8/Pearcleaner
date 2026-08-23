@@ -221,16 +221,18 @@ final class CoverageLedgerTests: XCTestCase {
         await XCTAssertThrowsCoverageError(.detailLimitExceeded(.nodeLockfile)) {
             try await ledger.record(.coordinates(status: .complete, count: 2), in: transaction)
         }
-        try await ledger.record(
-            .coordinates(status: .partial(.entryBudget), count: 1),
-            in: transaction
-        )
+        try await ledger.record(.coordinates(status: .complete, count: 1), in: transaction)
         try await ledger.record(.competingLockfiles(.complete(count: 0)), in: transaction)
         try await ledger.finish(transaction)
         try await completeAllDetectors(except: [.nodeLockfile], in: ledger)
         let snapshot = try await ledger.finalize()
 
         XCTAssertEqual(detector(.nodeLockfile, in: snapshot).terminalState, .partial)
+        XCTAssertTrue(
+            detector(.nodeLockfile, in: snapshot).details.contains(
+                .coordinates(status: .partial(.entryBudget), count: 0)
+            )
+        )
         XCTAssertTrue(
             snapshot.detectors
                 .filter { $0.detector != .nodeLockfile }
@@ -251,6 +253,68 @@ final class CoverageLedgerTests: XCTestCase {
             snapshot.detectors
                 .filter { $0.detector != .secret }
                 .allSatisfy { $0.terminalState == .partial }
+        )
+    }
+
+    func testSaturatedSessionReasonStillClosesTheWholeRunAtomically() async throws {
+        let ledger = makeLedger()
+        let transaction = try await ledger.begin(.secret)
+        try await ledger.record(.candidate(files: .max, bytes: 0), in: transaction)
+        try await ledger.record(
+            .skipped(reason: .globalByteBudget, files: .max, bytes: 0),
+            in: transaction
+        )
+
+        try await ledger.record(.globalLimit(.globalByteBudget))
+        let snapshot = try await ledger.finalize()
+
+        XCTAssertEqual(snapshot.terminalState, .partial)
+        XCTAssertTrue(snapshot.detectors.allSatisfy { $0.terminalState == .partial })
+        XCTAssertEqual(
+            detector(.secret, in: snapshot).reasonCounts[.globalByteBudget],
+            UInt64.max
+        )
+    }
+
+    func testSessionConditionEscalationUsesExactPrecedenceAndPreservesFinishedPeers() async throws {
+        let partialLedger = makeLedger()
+        _ = try await completeDetector(.secret, in: partialLedger)
+        try await partialLedger.record(.globalLimit(.globalByteBudget))
+        let partial = try await partialLedger.finalize()
+        XCTAssertEqual(partial.terminalState, .partial)
+
+        let cancelledLedger = makeLedger()
+        _ = try await completeDetector(.secret, in: cancelledLedger)
+        try await cancelledLedger.record(.globalLimit(.globalByteBudget))
+        try await cancelledLedger.record(.cancelled)
+        let cancelled = try await cancelledLedger.finalize()
+        XCTAssertEqual(cancelled.terminalState, .cancelled)
+
+        let failedLedger = makeLedger()
+        _ = try await completeDetector(.secret, in: failedLedger)
+        try await failedLedger.record(.globalLimit(.globalByteBudget))
+        try await failedLedger.record(.cancelled)
+        try await failedLedger.record(.failed)
+        let failed = try await failedLedger.finalize()
+        XCTAssertEqual(failed.terminalState, .failed)
+
+        let unavailableLedger = makeLedger()
+        _ = try await completeDetector(.secret, in: unavailableLedger)
+        try await unavailableLedger.record(.globalLimit(.globalByteBudget))
+        try await unavailableLedger.record(.cancelled)
+        try await unavailableLedger.record(.failed)
+        try await unavailableLedger.record(.rootUnavailable)
+        try await unavailableLedger.record(.failed)
+        try await unavailableLedger.record(.cancelled)
+        try await unavailableLedger.record(.globalLimit(.wallTimeBudget))
+        let unavailable = try await unavailableLedger.finalize()
+
+        XCTAssertEqual(unavailable.terminalState, .unavailable)
+        XCTAssertEqual(detector(.secret, in: unavailable).terminalState, .complete)
+        XCTAssertTrue(
+            unavailable.detectors
+                .filter { $0.detector != .secret }
+                .allSatisfy { $0.terminalState == .unavailable }
         )
     }
 

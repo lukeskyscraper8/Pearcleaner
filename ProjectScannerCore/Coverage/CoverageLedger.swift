@@ -302,6 +302,12 @@ public actor CoverageLedger {
         } catch is CounterArithmeticError {
             records[index].phase = .closed(.failed, sessionDerived: false)
             throw CoverageLedgerError.counterOverflow(records[index].detector)
+        } catch let error as CoverageLedgerError {
+            if case .detailLimitExceeded = error, let limitingDetail = detail.limitExceededDetail {
+                updated.details.append(limitingDetail)
+                records[index] = updated
+            }
+            throw error
         }
 
         updated.details.append(detail)
@@ -388,11 +394,11 @@ public actor CoverageLedger {
         if let current = sessionCondition, current.precedence >= condition.precedence {
             return
         }
-        sessionCondition = condition
+        var updatedRecords = records
 
-        for index in records.indices {
+        for index in updatedRecords.indices {
             let shouldClose: Bool
-            switch records[index].phase {
+            switch updatedRecords[index].phase {
             case .planned, .open:
                 shouldClose = true
             case let .closed(_, sessionDerived):
@@ -403,15 +409,15 @@ public actor CoverageLedger {
             }
 
             if let reason = condition.reasonCode {
-                do {
-                    try addReason(reason, count: 1, to: &records[index])
-                } catch is CounterArithmeticError {
-                    records[index].phase = .closed(.failed, sessionDerived: true)
-                    throw CoverageLedgerError.counterOverflow(records[index].detector)
-                }
+                addSessionReason(reason, to: &updatedRecords[index])
             }
-            records[index].phase = .closed(condition.detectorTerminalState, sessionDerived: true)
+            updatedRecords[index].phase = .closed(
+                condition.detectorTerminalState,
+                sessionDerived: true
+            )
         }
+        records = updatedRecords
+        sessionCondition = condition
     }
 
     public func finalize() throws -> ScanCoverageSnapshot {
@@ -472,6 +478,17 @@ public actor CoverageLedger {
         to record: inout DetectorRecord
     ) throws {
         record.reasonCounts[reason] = try checkedAdding(record.reasonCounts[reason, default: 0], count)
+    }
+
+    private func addSessionReason(
+        _ reason: CoverageReasonCode,
+        to record: inout DetectorRecord
+    ) {
+        let current = record.reasonCounts[reason, default: 0]
+        let (next, overflow) = current.addingReportingOverflow(1)
+        if !overflow {
+            record.reasonCounts[reason] = next
+        }
     }
 
     private func validateDetailCount(
@@ -590,6 +607,19 @@ private extension Array where Element == DetectorCoverageDetail {
 }
 
 private extension DetectorCoverageDetail {
+    var limitExceededDetail: DetectorCoverageDetail? {
+        switch self {
+        case .coordinates:
+            return .coordinates(status: .partial(.entryBudget), count: 0)
+        case .installedManifests:
+            return .installedManifests(.partial(.entryBudget), count: 0)
+        case .competingLockfiles:
+            return .competingLockfiles(.partial(count: 0, reason: .entryBudget))
+        case .gitRepository, .lockfile, .advisory:
+            return nil
+        }
+    }
+
     func isApplicable(to detector: DetectorID) -> Bool {
         switch (detector, self) {
         case (.nodeLockfile, .lockfile),
