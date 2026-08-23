@@ -67,15 +67,24 @@ public struct FileIdentity: Sendable, Equatable, Hashable {
     }
 }
 
+// Descriptor-bearing owners release this marker only after their descriptor is closed.
+protocol DescriptorLifetime: AnyObject, Sendable {}
+
 fileprivate final class OwnedFileDescriptor: @unchecked Sendable {
     private let lock = NSLock()
     private var value: Int32
     private let accounting: DescriptorAccounting?
+    private var descriptorLifetime: (any DescriptorLifetime)?
 
-    init(taking value: Int32, accounting: DescriptorAccounting? = nil) throws {
+    init(
+        taking value: Int32,
+        accounting: DescriptorAccounting? = nil,
+        descriptorLifetime: (any DescriptorLifetime)? = nil
+    ) throws {
         guard value >= 0 else { throw ContainmentError.openFailed }
         self.value = value
         self.accounting = accounting
+        self.descriptorLifetime = descriptorLifetime
         accounting?.retain()
     }
 
@@ -88,7 +97,19 @@ fileprivate final class OwnedFileDescriptor: @unchecked Sendable {
             guard value >= 0 else { throw ContainmentError.closedCapability }
             let duplicate = fcntl(value, F_DUPFD_CLOEXEC, 0)
             guard duplicate >= 0 else { throw ContainmentError.openFailed }
-            return try OwnedFileDescriptor(taking: duplicate, accounting: accounting)
+            return try OwnedFileDescriptor(
+                taking: duplicate,
+                accounting: accounting,
+                descriptorLifetime: descriptorLifetime
+            )
+        }
+    }
+
+    func bindDescriptorLifetime(_ lifetime: any DescriptorLifetime) {
+        lock.withLock {
+            precondition(value >= 0)
+            precondition(descriptorLifetime == nil)
+            descriptorLifetime = lifetime
         }
     }
 
@@ -108,13 +129,15 @@ fileprivate final class OwnedFileDescriptor: @unchecked Sendable {
     }
 
     func closeIfNeeded() {
-        lock.withLock {
-            if value >= 0 {
-                Darwin.close(value)
-                value = -1
-                accounting?.release()
-            }
+        let releasedLifetime = lock.withLock { () -> (any DescriptorLifetime)? in
+            guard value >= 0 else { return nil }
+            Darwin.close(value)
+            value = -1
+            accounting?.release()
+            defer { descriptorLifetime = nil }
+            return descriptorLifetime
         }
+        withExtendedLifetime(releasedLifetime) {}
     }
 }
 
@@ -720,6 +743,7 @@ private extension ContentReadError {
 
 actor FileBroker {
     private let rootDescriptor: OwnedFileDescriptor
+    private let descriptorLifetime: (any DescriptorLifetime)?
     nonisolated let rootIdentity: FileIdentity
     nonisolated let limits: ScanLimits
     nonisolated private let inputBudget: InputBudget
@@ -732,9 +756,11 @@ actor FileBroker {
         rootDescriptor: OwnedFileDescriptor,
         rootIdentity: FileIdentity,
         limits: ScanLimits,
-        testControl: FileBrokerTestControl?
+        testControl: FileBrokerTestControl?,
+        descriptorLifetime: (any DescriptorLifetime)?
     ) {
         self.rootDescriptor = rootDescriptor
+        self.descriptorLifetime = descriptorLifetime
         self.rootIdentity = rootIdentity
         self.limits = limits
         inputBudget = InputBudget(limits: limits)
@@ -760,7 +786,8 @@ actor FileBroker {
             limits: limits,
             brokerNonce: nonce,
             testControl: testControl,
-            descriptorAccounting: descriptorAccounting
+            descriptorAccounting: descriptorAccounting,
+            descriptorLifetime: descriptorLifetime
         )
     }
 
@@ -845,7 +872,8 @@ actor FileBroker {
                     component,
                     relativeTo: descriptor,
                     flags: O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC,
-                    accounting: descriptorAccounting
+                    accounting: descriptorAccounting,
+                    descriptorLifetime: descriptorLifetime
                 )
             }
             let identity = try opened.withFileDescriptor(status)
@@ -876,7 +904,8 @@ actor FileBroker {
                 leaf,
                 relativeTo: descriptor,
                 flags: O_RDONLY | O_NONBLOCK | O_NOFOLLOW | O_CLOEXEC,
-                accounting: descriptorAccounting
+                accounting: descriptorAccounting,
+                descriptorLifetime: descriptorLifetime
             )
         }
         let identity = try opened.withFileDescriptor(status)
@@ -893,6 +922,7 @@ actor FileBroker {
 
 actor FileTraversal {
     private var stack: [DirectoryFrame]
+    private let descriptorLifetime: (any DescriptorLifetime)?
     private let rootIdentity: FileIdentity
     private let limits: ScanLimits
     private let brokerNonce: UUID
@@ -911,8 +941,10 @@ actor FileTraversal {
         limits: ScanLimits,
         brokerNonce: UUID,
         testControl: FileBrokerTestControl?,
-        descriptorAccounting: DescriptorAccounting
+        descriptorAccounting: DescriptorAccounting,
+        descriptorLifetime: (any DescriptorLifetime)?
     ) throws {
+        self.descriptorLifetime = descriptorLifetime
         self.rootIdentity = rootIdentity
         self.limits = limits
         self.brokerNonce = brokerNonce
@@ -925,7 +957,8 @@ actor FileTraversal {
             ancestry: [DirectoryIdentity(rootIdentity)],
             linkProof: [],
             linkHops: 0,
-            descriptorAccounting: descriptorAccounting
+            descriptorAccounting: descriptorAccounting,
+            descriptorLifetime: descriptorLifetime
         )]
     }
 
@@ -1066,7 +1099,8 @@ actor FileTraversal {
                     name,
                     relativeTo: descriptor,
                     flags: O_RDONLY | O_NONBLOCK | O_NOFOLLOW | O_CLOEXEC,
-                    accounting: descriptorAccounting
+                    accounting: descriptorAccounting,
+                    descriptorLifetime: descriptorLifetime
                 )
             }
             let identity = try opened.withFileDescriptor(status)
@@ -1115,10 +1149,11 @@ actor FileTraversal {
         do {
             let opened = try frame.withFileDescriptor { descriptor in
                 try openOwned(
-                name,
-                relativeTo: descriptor,
-                flags: O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC,
-                accounting: descriptorAccounting
+                    name,
+                    relativeTo: descriptor,
+                    flags: O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC,
+                    accounting: descriptorAccounting,
+                    descriptorLifetime: descriptorLifetime
                 )
             }
             let identity = try opened.withFileDescriptor(status)
@@ -1136,7 +1171,8 @@ actor FileTraversal {
                 ancestry: frame.ancestry + [DirectoryIdentity(identity)],
                 linkProof: frame.linkProof,
                 linkHops: frame.linkHops,
-                descriptorAccounting: descriptorAccounting
+                descriptorAccounting: descriptorAccounting,
+                descriptorLifetime: descriptorLifetime
             ))
             directoriesOpened += 1
             return nil
@@ -1243,7 +1279,8 @@ actor FileTraversal {
                     ancestry: ancestry,
                     linkProof: proofs,
                     linkHops: hops,
-                    descriptorAccounting: descriptorAccounting
+                    descriptorAccounting: descriptorAccounting,
+                    descriptorLifetime: descriptorLifetime
                 ))
                 directoriesOpened += 1
                 return nil
@@ -1288,7 +1325,8 @@ actor FileTraversal {
                             Data("..".utf8),
                             relativeTo: descriptor,
                             flags: O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC,
-                            accounting: descriptorAccounting
+                            accounting: descriptorAccounting,
+                            descriptorLifetime: descriptorLifetime
                         )
                     }
                     let identity = try parent.withFileDescriptor(status)
@@ -1393,7 +1431,8 @@ actor FileTraversal {
                             component,
                             relativeTo: descriptor,
                             flags: O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC,
-                            accounting: descriptorAccounting
+                            accounting: descriptorAccounting,
+                            descriptorLifetime: descriptorLifetime
                         )
                     }
                     let identity = try opened.withFileDescriptor(status)
@@ -1426,7 +1465,8 @@ actor FileTraversal {
                             component,
                             relativeTo: descriptor,
                             flags: O_RDONLY | O_NONBLOCK | O_NOFOLLOW | O_CLOEXEC,
-                            accounting: descriptorAccounting
+                            accounting: descriptorAccounting,
+                            descriptorLifetime: descriptorLifetime
                         )
                     }
                     let identity = try opened.withFileDescriptor(status)
@@ -1511,7 +1551,8 @@ actor FileTraversal {
                     component,
                     relativeTo: descriptor,
                     flags: O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC,
-                    accounting: descriptorAccounting
+                    accounting: descriptorAccounting,
+                    descriptorLifetime: descriptorLifetime
                 )
             }
             let identity = try opened.withFileDescriptor(status)
@@ -1561,6 +1602,7 @@ fileprivate final class DirectoryFrame: @unchecked Sendable {
     private let descriptorAccounting: DescriptorAccounting
     private let lock = NSLock()
     private var cursor: UnsafeMutablePointer<DIR>?
+    private var descriptorLifetime: (any DescriptorLifetime)?
 
     init(
         descriptor: OwnedFileDescriptor,
@@ -1569,7 +1611,8 @@ fileprivate final class DirectoryFrame: @unchecked Sendable {
         ancestry: [DirectoryIdentity],
         linkProof: [LinkProof],
         linkHops: UInt32,
-        descriptorAccounting: DescriptorAccounting
+        descriptorAccounting: DescriptorAccounting,
+        descriptorLifetime: (any DescriptorLifetime)?
     ) throws {
         let raw = try descriptor.take()
         guard let opened = fdopendir(raw) else {
@@ -1584,6 +1627,7 @@ fileprivate final class DirectoryFrame: @unchecked Sendable {
         self.linkProof = linkProof
         self.linkHops = linkHops
         self.descriptorAccounting = descriptorAccounting
+        self.descriptorLifetime = descriptorLifetime
     }
 
     deinit {
@@ -1621,17 +1665,24 @@ fileprivate final class DirectoryFrame: @unchecked Sendable {
         try withFileDescriptor { descriptor in
             let duplicate = fcntl(descriptor, F_DUPFD_CLOEXEC, 0)
             guard duplicate >= 0 else { throw FileAccessFailure(reason: .unreadable) }
-            return try OwnedFileDescriptor(taking: duplicate, accounting: accounting)
+            return try OwnedFileDescriptor(
+                taking: duplicate,
+                accounting: accounting,
+                descriptorLifetime: descriptorLifetime
+            )
         }
     }
 
     func close() {
-        lock.withLock {
-            guard let cursor else { return }
+        let releasedLifetime = lock.withLock { () -> (any DescriptorLifetime)? in
+            guard let cursor else { return nil }
             closedir(cursor)
             self.cursor = nil
             descriptorAccounting.release()
+            defer { descriptorLifetime = nil }
+            return descriptorLifetime
         }
+        withExtendedLifetime(releasedLifetime) {}
     }
 }
 
@@ -1704,7 +1755,8 @@ fileprivate func openOwned(
     _ name: Data,
     relativeTo descriptor: Int32,
     flags: Int32,
-    accounting: DescriptorAccounting? = nil
+    accounting: DescriptorAccounting? = nil,
+    descriptorLifetime: (any DescriptorLifetime)? = nil
 ) throws -> OwnedFileDescriptor {
     try name.withNullTerminatedBytes { pointer in
         let opened = openat(descriptor, pointer, flags)
@@ -1718,7 +1770,11 @@ fileprivate func openOwned(
             }
             throw FileAccessFailure(reason: reason)
         }
-        return try OwnedFileDescriptor(taking: opened, accounting: accounting)
+        return try OwnedFileDescriptor(
+            taking: opened,
+            accounting: accounting,
+            descriptorLifetime: descriptorLifetime
+        )
     }
 }
 
@@ -1828,12 +1884,39 @@ public final class RootCapability: @unchecked Sendable {
     }
 
     func makeFileBroker(limits: ScanLimits) throws -> FileBroker {
-        try makeFileBroker(limits: limits, testControl: nil)
+        try makeFileBroker(
+            limits: limits,
+            testControl: nil,
+            descriptorLifetime: nil
+        )
     }
 
     func makeFileBroker(
         limits: ScanLimits,
         testControl: FileBrokerTestControl?
+    ) throws -> FileBroker {
+        try makeFileBroker(
+            limits: limits,
+            testControl: testControl,
+            descriptorLifetime: nil
+        )
+    }
+
+    func makeFileBroker(
+        limits: ScanLimits,
+        descriptorLifetime: any DescriptorLifetime
+    ) throws -> FileBroker {
+        try makeFileBroker(
+            limits: limits,
+            testControl: nil,
+            descriptorLifetime: descriptorLifetime
+        )
+    }
+
+    private func makeFileBroker(
+        limits: ScanLimits,
+        testControl: FileBrokerTestControl?,
+        descriptorLifetime: (any DescriptorLifetime)?
     ) throws -> FileBroker {
         let transferred = try lock.withLock { () throws -> OwnedFileDescriptor in
             switch disposition {
@@ -1848,11 +1931,15 @@ public final class RootCapability: @unchecked Sendable {
                 throw ContainmentError.brokerAlreadyIssued
             }
         }
+        if let descriptorLifetime {
+            transferred.bindDescriptorLifetime(descriptorLifetime)
+        }
         return FileBroker(
             rootDescriptor: transferred,
             rootIdentity: identity,
             limits: limits,
-            testControl: testControl
+            testControl: testControl,
+            descriptorLifetime: descriptorLifetime
         )
     }
 

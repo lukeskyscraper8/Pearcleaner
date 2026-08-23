@@ -65,6 +65,23 @@ final class ProjectBookmarkTests: XCTestCase {
         XCTAssertEqual(client.stopCount, 0)
     }
 
+    func testStoredBookmarkResolveRejectsStaleBeforeStartingScope() throws {
+        let fixture = try BookmarkFixture()
+        defer { fixture.remove() }
+        let client = RecordingBookmarkClient(resolvedURL: fixture.root)
+        let access = ProjectBookmarkAccess(client: client)
+        let bookmark = try access.create(selectedURL: fixture.root)
+        XCTAssertEqual(client.startCount, 1)
+        XCTAssertEqual(client.stopCount, 1)
+        client.isStale = true
+
+        XCTAssertThrowsError(try access.resolve(bookmark)) { error in
+            XCTAssertEqual(error as? ProjectBookmarkError, .staleBookmark)
+        }
+        XCTAssertEqual(client.startCount, 1)
+        XCTAssertEqual(client.stopCount, 1)
+    }
+
     func testMovedBookmarkedRootKeepsIdentityAfterFreshOpen() throws {
         let fixture = try BookmarkFixture()
         defer { fixture.remove() }
@@ -76,10 +93,10 @@ final class ProjectBookmarkTests: XCTestCase {
         client.resolvedURL = moved
 
         let lease = try access.resolve(bookmark)
-        defer { lease.close() }
+        let broker = try lease.makeFileBroker(limits: .defaults)
 
-        XCTAssertEqual(lease.rootCapability.identity.device, try device(of: moved))
-        XCTAssertEqual(lease.rootCapability.identity.inode, try inode(of: moved))
+        XCTAssertEqual(broker.rootIdentity.device, try device(of: moved))
+        XCTAssertEqual(broker.rootIdentity.inode, try inode(of: moved))
     }
 
     func testReplacementAtFormerBookmarkPathIsNotSilentlyAuthorized() throws {
@@ -142,6 +159,41 @@ final class ProjectBookmarkTests: XCTestCase {
             }
         }
 
+        XCTAssertEqual(client.stopCount, 2)
+    }
+
+    func testBookmarkScopeOutlivesLeaseAndBrokerWhileTraversalOwnsDescriptor() async throws {
+        let fixture = try BookmarkFixture()
+        defer { fixture.remove() }
+        let client = RecordingBookmarkClient(resolvedURL: fixture.root)
+        let access = ProjectBookmarkAccess(client: client)
+        let bookmark = try access.create(selectedURL: fixture.root)
+        var lease: ResolvedProjectBookmarkLease? = try access.resolve(bookmark)
+        var broker: FileBroker? = try lease?.makeFileBroker(limits: .defaults)
+        var traversal: FileTraversal? = try await broker?.makeTraversal()
+        XCTAssertEqual(client.startCount, 2)
+        XCTAssertEqual(client.stopCount, 1)
+        let openDirectoryDescriptorCount = await broker?.openTraversalDirectoryDescriptorCount()
+        XCTAssertEqual(openDirectoryDescriptorCount, 1)
+
+        lease?.close()
+        lease = nil
+        XCTAssertEqual(client.stopCount, 1)
+
+        weak let releasedBroker = broker
+        broker = nil
+        for _ in 0..<100 where releasedBroker != nil {
+            await Task.yield()
+        }
+        XCTAssertNil(releasedBroker)
+        XCTAssertEqual(client.stopCount, 1)
+
+        weak let releasedTraversal = traversal
+        traversal = nil
+        for _ in 0..<100 where releasedTraversal != nil {
+            await Task.yield()
+        }
+        XCTAssertNil(releasedTraversal)
         XCTAssertEqual(client.stopCount, 2)
     }
 

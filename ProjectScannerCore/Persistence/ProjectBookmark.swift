@@ -198,51 +198,113 @@ public final class ProjectBookmarkAccess: @unchecked Sendable {
             throw ProjectBookmarkError.identityChanged
         }
 
-        let lease = ResolvedProjectBookmarkLease(
-            rootCapability: root,
+        let scopeLifetime = SecurityScopeLifetime(
             resolvedURL: resolvedURL,
             client: client
+        )
+        let lease = ResolvedProjectBookmarkLease(
+            rootCapability: root,
+            scopeLifetime: scopeLifetime
         )
         scopeOwned = false
         return lease
     }
 }
 
-public final class ResolvedProjectBookmarkLease: @unchecked Sendable {
-    // The lease must outlive all descriptor-backed scan and broker work derived from this root.
-    // Task 9 cannot mechanically bind an already-extracted broker back to this lifetime.
-    public let rootCapability: RootCapability
-    private let lock = NSLock()
-    private var ownedRootCapability: RootCapability?
-    private var resolvedURL: URL?
-    private var client: (any BookmarkClient)?
+final class SecurityScopeLifetime: DescriptorLifetime, @unchecked Sendable {
+    private struct Access {
+        let resolvedURL: URL
+        let client: any BookmarkClient
+    }
 
-    init(
-        rootCapability: RootCapability,
+    private let lock = NSLock()
+    private var access: Access?
+
+    fileprivate init(
         resolvedURL: URL,
         client: any BookmarkClient
     ) {
+        access = Access(resolvedURL: resolvedURL, client: client)
+    }
+
+    fileprivate func stop() {
+        let removed = lock.withLock { () -> Access? in
+            defer { access = nil }
+            return access
+        }
+        if let removed {
+            removed.client.stopAccessing(removed.resolvedURL)
+        }
+    }
+
+    deinit {
+        stop()
+    }
+}
+
+public final class ResolvedProjectBookmarkLease: @unchecked Sendable {
+    private enum Disposition {
+        case available
+        case closed
+        case brokerIssued
+    }
+
+    private let lock = NSLock()
+    private var rootCapability: RootCapability?
+    private var scopeLifetime: SecurityScopeLifetime?
+    private var disposition = Disposition.available
+
+    init(
+        rootCapability: RootCapability,
+        scopeLifetime: SecurityScopeLifetime
+    ) {
         self.rootCapability = rootCapability
-        ownedRootCapability = rootCapability
-        self.resolvedURL = resolvedURL
-        self.client = client
+        self.scopeLifetime = scopeLifetime
+    }
+
+    func makeFileBroker(limits: ScanLimits) throws -> FileBroker {
+        let owned = try lock.withLock { () throws -> (RootCapability, SecurityScopeLifetime) in
+            switch disposition {
+            case .available:
+                guard let rootCapability, let scopeLifetime else {
+                    throw ContainmentError.closedCapability
+                }
+                self.rootCapability = nil
+                self.scopeLifetime = nil
+                disposition = .brokerIssued
+                return (rootCapability, scopeLifetime)
+            case .closed:
+                throw ContainmentError.closedCapability
+            case .brokerIssued:
+                throw ContainmentError.brokerAlreadyIssued
+            }
+        }
+
+        do {
+            return try owned.0.makeFileBroker(
+                limits: limits,
+                descriptorLifetime: owned.1
+            )
+        } catch {
+            owned.0.close()
+            owned.1.stop()
+            throw error
+        }
     }
 
     public func close() {
-        let owned = lock.withLock { () -> (RootCapability, URL, any BookmarkClient)? in
-            guard let root = ownedRootCapability,
-                  let url = resolvedURL,
-                  let client else {
-                return nil
-            }
-            ownedRootCapability = nil
-            resolvedURL = nil
-            self.client = nil
-            return (root, url, client)
+        let owned = lock.withLock { () -> (RootCapability, SecurityScopeLifetime)? in
+            guard case .available = disposition,
+                  let rootCapability,
+                  let scopeLifetime else { return nil }
+            self.rootCapability = nil
+            self.scopeLifetime = nil
+            disposition = .closed
+            return (rootCapability, scopeLifetime)
         }
         guard let owned else { return }
         owned.0.close()
-        owned.2.stopAccessing(owned.1)
+        owned.1.stop()
     }
 
     deinit {

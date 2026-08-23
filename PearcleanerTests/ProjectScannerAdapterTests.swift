@@ -14,9 +14,38 @@ final class ProjectScannerAdapterTests: XCTestCase {
             return XCTFail("Expected creation")
         }
         let query = try XCTUnwrap(client.addQueries.first)
+        XCTAssertEqual(
+            Set(query.keys),
+            Set([
+                kSecClass,
+                kSecAttrService,
+                kSecAttrAccount,
+                kSecAttrAccessible,
+                kSecAttrSynchronizable,
+                kSecValueData,
+            ])
+        )
+        XCTAssertEqual(query[kSecClass] as? String, kSecClassGenericPassword as String)
+        XCTAssertEqual(
+            query[kSecAttrService] as? String,
+            "com.lukerow.Pearcleaner.project-scanner.hmac"
+        )
+        XCTAssertEqual(query[kSecAttrAccount] as? String, "suppression-v1")
         XCTAssertEqual(query[kSecAttrAccessible] as? String, kSecAttrAccessibleWhenUnlockedThisDeviceOnly as String)
         XCTAssertEqual(query[kSecAttrSynchronizable] as? Bool, false)
         XCTAssertNil(query[kSecAttrAccessGroup])
+        XCTAssertEqual(
+            client.addedRecordSnapshot,
+            Data([
+                0x01,
+                0x00, 0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77,
+                0x88, 0x99, 0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF,
+                0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07,
+                0x08, 0x09, 0x0A, 0x0B, 0x0C, 0x0D, 0x0E, 0x0F,
+                0x10, 0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17,
+                0x18, 0x19, 0x1A, 0x1B, 0x1C, 0x1D, 0x1E, 0x1F,
+            ])
+        )
         let retained = try XCTUnwrap(client.retainedAddedRecord)
         XCTAssertTrue(retained.bytes().allSatisfy { $0 == 0 })
     }
@@ -181,6 +210,7 @@ private final class RecordingSecItemClient: SecItemClient, @unchecked Sendable {
     private(set) var addQueries: [[CFString: Any]] = []
     private(set) var copyQueries: [[CFString: Any]] = []
     private(set) var retainedAddedRecord: NSMutableData?
+    private(set) var addedRecordSnapshot: Data?
     private(set) var duplicateReadObservedZeroedAddRecord = false
 
     init(
@@ -197,6 +227,9 @@ private final class RecordingSecItemClient: SecItemClient, @unchecked Sendable {
         lock.withLock {
             addQueries.append(attributes)
             retainedAddedRecord = attributes[kSecValueData] as? NSMutableData
+            if let record = retainedAddedRecord {
+                addedRecordSnapshot = Data(bytes: record.bytes, count: record.length)
+            }
         }
         return addStatus
     }

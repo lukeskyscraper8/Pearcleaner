@@ -10,6 +10,7 @@
 /* Begin PBXBuildFile section */
 		A20000000000000000000009 /* libProjectScannerCore.a in Frameworks */ = {isa = PBXBuildFile; fileRef = A20000000000000000000001 /* libProjectScannerCore.a */; };
 		A2000000000000000000000A /* libProjectScannerCore.a in Frameworks */ = {isa = PBXBuildFile; fileRef = A20000000000000000000001 /* libProjectScannerCore.a */; };
+		A20000000000000000000047 /* libProjectScannerCore.a in Frameworks */ = {isa = PBXBuildFile; fileRef = A20000000000000000000001 /* libProjectScannerCore.a */; };
 		A20000000000000000000041 /* KeychainProjectKeyStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000042 /* KeychainProjectKeyStore.swift */; };
 		A20000000000000000000043 /* ProjectScannerEnvironment.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000044 /* ProjectScannerEnvironment.swift */; };
 		A20000000000000000000045 /* ScannerDiagnosticsAdapter.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000046 /* ScannerDiagnosticsAdapter.swift */; };
@@ -318,7 +319,7 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
-				A20000000000000000000009 /* libProjectScannerCore.a in Frameworks */,
+				A20000000000000000000047 /* libProjectScannerCore.a in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
