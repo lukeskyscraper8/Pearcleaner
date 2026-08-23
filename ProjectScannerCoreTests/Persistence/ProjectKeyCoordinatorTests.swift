@@ -93,6 +93,39 @@ final class ProjectKeyCoordinatorTests: XCTestCase {
         let cancellationCreateCount = await cancellationStore.createCallCount()
         XCTAssertEqual(cancellationCreateCount, 1)
         XCTAssertEqual(cancellationSnapshot.stored?.secureStorageRecord(), holderLease.material.secureStorageRecord())
+
+        let postCreateStore = ScriptedKeyStore(pauseFirstCreate: true)
+        let postCreateCoordinator = makeCoordinator(
+            store: postCreateStore,
+            randomBytes: [keyBytes(0x81), keyBytes(0x82)],
+            uuids: [uuid(81), uuid(82)]
+        )
+        let creating = Task { try await postCreateCoordinator.access(for: .none) }
+        guard await postCreateStore.waitUntilFirstCreatePaused(timeoutNanoseconds: 1_000_000_000) else {
+            await postCreateStore.resumeFirstCreate()
+            _ = try await creating.value
+            XCTFail("Timed out waiting for post-create cancellation pause")
+            return
+        }
+        creating.cancel()
+        await Task.yield()
+        await postCreateStore.resumeFirstCreate()
+
+        await XCTAssertThrowsCancellation(try await creating.value)
+        let reusedLease = try readyLease(try await postCreateCoordinator.access(for: .none))
+        let expectedCommittedMaterial = try material(generation: uuid(81), bytes: keyBytes(0x81))
+        let postCreateSnapshot = await postCreateStore.snapshot()
+        XCTAssertEqual(
+            postCreateSnapshot.calls,
+            [.read, .create(generation: uuid(81)), .read]
+        )
+        let postCreateCount = await postCreateStore.createCallCount()
+        XCTAssertEqual(postCreateCount, 1)
+        XCTAssertEqual(
+            postCreateSnapshot.stored?.secureStorageRecord(),
+            expectedCommittedMaterial.secureStorageRecord()
+        )
+        XCTAssertEqual(reusedLease.material.secureStorageRecord(), expectedCommittedMaterial.secureStorageRecord())
     }
 
     func testExistingKeyWithoutProjectStateCanBeReused() async throws {

@@ -28,17 +28,23 @@ actor ScriptedKeyStore: ProjectKeyMaterialStoring {
     private var firstReadWaiters: [CheckedContinuation<Void, Never>] = []
     private var firstReadTimedWaiters: [UUID: CheckedContinuation<Bool, Never>] = [:]
     private var firstReadResume: CheckedContinuation<Void, Never>?
+    private var firstCreatePaused = false
+    private var firstCreateReached = false
+    private var firstCreateTimedWaiters: [UUID: CheckedContinuation<Bool, Never>] = [:]
+    private var firstCreateResume: CheckedContinuation<Void, Never>?
 
     init(
         stored: ProjectKeyMaterial? = nil,
         reads: [ScriptedReadStep] = [],
         creates: [ScriptedCreateStep] = [],
-        pauseFirstRead: Bool = false
+        pauseFirstRead: Bool = false,
+        pauseFirstCreate: Bool = false
     ) {
         self.stored = stored
         self.reads = reads
         self.creates = creates
         firstReadPaused = pauseFirstRead
+        firstCreatePaused = pauseFirstCreate
     }
 
     func read() async -> StoredKeyRead {
@@ -63,6 +69,13 @@ actor ScriptedKeyStore: ProjectKeyMaterialStoring {
         beginOperation()
         defer { endOperation() }
         calls.append(.create(generation: material.generation))
+        if firstCreatePaused && !firstCreateReached {
+            firstCreateReached = true
+            let timedWaiters = firstCreateTimedWaiters.values
+            firstCreateTimedWaiters.removeAll()
+            timedWaiters.forEach { $0.resume(returning: true) }
+            await withCheckedContinuation { firstCreateResume = $0 }
+        }
         if !creates.isEmpty {
             switch creates.removeFirst() {
             case .fixed(let result): return result
@@ -98,6 +111,25 @@ actor ScriptedKeyStore: ProjectKeyMaterialStoring {
         continuation?.resume()
     }
 
+    func waitUntilFirstCreatePaused(timeoutNanoseconds: UInt64) async -> Bool {
+        guard !firstCreateReached else { return true }
+        let token = UUID()
+        return await withCheckedContinuation { continuation in
+            firstCreateTimedWaiters[token] = continuation
+            Task {
+                try? await Task.sleep(nanoseconds: timeoutNanoseconds)
+                self.timeoutFirstCreateWaiter(token)
+            }
+        }
+    }
+
+    func resumeFirstCreate() {
+        firstCreatePaused = false
+        let continuation = firstCreateResume
+        firstCreateResume = nil
+        continuation?.resume()
+    }
+
     func createCallCount() -> Int {
         calls.reduce(into: 0) { count, call in
             if case .create = call { count += 1 }
@@ -106,6 +138,10 @@ actor ScriptedKeyStore: ProjectKeyMaterialStoring {
 
     private func timeoutFirstReadWaiter(_ token: UUID) {
         firstReadTimedWaiters.removeValue(forKey: token)?.resume(returning: false)
+    }
+
+    private func timeoutFirstCreateWaiter(_ token: UUID) {
+        firstCreateTimedWaiters.removeValue(forKey: token)?.resume(returning: false)
     }
 
     func snapshot() -> (calls: [ScriptedStoreCall], stored: ProjectKeyMaterial?, maximumConcurrent: Int) {

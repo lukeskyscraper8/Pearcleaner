@@ -94,6 +94,7 @@ public actor ProjectKeyCoordinator {
             let proposed = try generateMaterial()
             try throwIfCancelled()
             let created = await store.createIfMissing(proposed)
+            try throwIfCancelled()
             switch created {
             case .created(let material), .existing(let material):
                 return .ready(.persistent(material))
