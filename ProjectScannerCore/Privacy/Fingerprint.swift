@@ -271,8 +271,7 @@ fileprivate struct SuppressionMACFramer {
             throw FingerprintError.invalidFieldLength
         }
 
-        let mutableBaseAddress = UnsafeMutableRawPointer(mutating: baseAddress)
-        let view = Data(bytesNoCopy: mutableBaseAddress, count: bytes.count, deallocator: .none)
+        let view = BorrowedHMACDataView(bytes)
         let aliasesSource = view.withUnsafeBytes { $0.baseAddress == baseAddress }
         hmac.update(data: view)
         return observeAlias && aliasesSource
@@ -288,6 +287,37 @@ fileprivate struct SuppressionMACFramer {
         remainingFields -= 1
     }
 }
+
+fileprivate struct BorrowedHMACDataView: RandomAccessCollection, ContiguousBytes, DataProtocol {
+    typealias Element = UInt8
+    typealias Index = Int
+    typealias SubSequence = Slice<BorrowedHMACDataView>
+    typealias Regions = CollectionOfOne<UnsafeRawBufferPointer>
+
+    private let bytes: UnsafeRawBufferPointer
+
+    init(_ bytes: UnsafeRawBufferPointer) {
+        precondition(!bytes.isEmpty)
+        self.bytes = bytes
+    }
+
+    var startIndex: Int { bytes.startIndex }
+    var endIndex: Int { bytes.endIndex }
+    var regions: Regions { CollectionOfOne(bytes) }
+
+    subscript(position: Int) -> UInt8 {
+        bytes[position]
+    }
+
+    func withUnsafeBytes<Result>(
+        _ body: (UnsafeRawBufferPointer) throws -> Result
+    ) rethrows -> Result {
+        try body(bytes)
+    }
+}
+
+@available(*, unavailable)
+extension BorrowedHMACDataView: Sendable {}
 
 private func encodedUInt32(_ value: UInt32) -> Data {
     var bigEndian = value.bigEndian

@@ -151,19 +151,42 @@ final class FingerprintTests: XCTestCase {
     }
 
     func testBorrowedFieldUsesANonOwningDataView() throws {
+        let keyBytes = Data(0..<32)
         let keyMaterial = try makeKeyMaterial()
         let vector = try makeVector()
-        let borrowed = Data(repeating: 0xA5, count: 4_097)
+        let borrowedFields = [
+            Data([0xA5]),
+            Data([0x10, 0x20, 0x30]),
+            Data(repeating: 0xA5, count: 14),
+            Data(repeating: 0xA5, count: 15),
+            Data(repeating: 0xA5, count: 4_097),
+        ]
+        for borrowed in borrowedFields {
+            let aliasesSource = try borrowed.withUnsafeBytes {
+                try FramedMACTestSupport.borrowedFieldViewAliasesSource(
+                    vector,
+                    borrowedField: $0,
+                    keyMaterial: keyMaterial
+                )
+            }
 
-        let aliasesSource = try borrowed.withUnsafeBytes {
-            try FramedMACTestSupport.borrowedFieldViewAliasesSource(
-                vector,
-                borrowedField: $0,
-                keyMaterial: keyMaterial
-            )
+            XCTAssertTrue(aliasesSource, "borrowed length \(borrowed.count) was copied")
         }
 
-        XCTAssertTrue(aliasesSource)
+        let emptyGoldenFrame = data(hex: """
+            00000006010000000000000043636f6d2e6c756b65726f772e50656172636c65616e65722e70726f6a6563742d7363616e6e65722e7375707072657373696f6e2e6672616d696e672d746573742e7631020000000000000004000000010300000000000000040102030404000000000000000200ff050000000000000017000000020000000000000001410000000000000002ff80060000000000000000
+            """)
+        let emptyPinnedHMAC = data(
+            hex: "eb63f71ebede76370c2576df612427347fd6dee59c1204bc35e2851814b46352"
+        )
+        XCTAssertEqual(emptyGoldenFrame.count, 158)
+        XCTAssertEqual(try hmacSHA256(message: emptyGoldenFrame, key: keyBytes), emptyPinnedHMAC)
+        XCTAssertEqual(
+            SuppressionFingerprintPersistence.encode(
+                try fingerprint(vector, borrowed: Data(), keyMaterial: keyMaterial)
+            ),
+            emptyPinnedHMAC
+        )
     }
 
     func testPersistenceBridgeRejectsAnythingOtherThanThirtyTwoBytes() throws {
