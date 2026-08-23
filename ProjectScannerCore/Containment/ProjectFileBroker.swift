@@ -347,6 +347,7 @@ enum ContentPurpose: Sendable, Equatable, Hashable {
 enum ContentReadError: Error, Sendable, Equatable {
     case purposeTooLarge(CoverageReasonCode)
     case globalByteBudget
+    case reservationClosed
     case unreadable
     case identityChanged
     case cancelled
@@ -368,9 +369,6 @@ final class InputBudget: @unchecked Sendable {
         for purpose: ContentPurpose
     ) throws -> BudgetReservation {
         try lock.withLock {
-            guard admittedFileBytes <= limit(for: purpose) else {
-                throw ContentReadError.purposeTooLarge(purpose.oversizedReason)
-            }
             let (admittedAndPending, pendingOverflow) = admittedInputBytes
                 .addingReportingOverflow(pendingInputBytes)
             let (nextInput, inputOverflow) = admittedAndPending
@@ -383,6 +381,9 @@ final class InputBudget: @unchecked Sendable {
                   !retainedOverflow,
                   nextRetained <= limits.retainedInputBytes else {
                 throw ContentReadError.globalByteBudget
+            }
+            guard admittedFileBytes <= limit(for: purpose) else {
+                throw ContentReadError.purposeTooLarge(purpose.oversizedReason)
             }
             pendingInputBytes += admittedFileBytes
             retainedBytes = nextRetained
@@ -431,9 +432,17 @@ final class InputBudget: @unchecked Sendable {
 }
 
 final class BudgetReservation: @unchecked Sendable {
+    private final class WeakRetainedLease {
+        weak var value: RetainedBudgetLease?
+
+        init(_ value: RetainedBudgetLease) {
+            self.value = value
+        }
+    }
+
     private enum State {
         case pending
-        case committed(RetainedBudgetLease)
+        case committed(WeakRetainedLease)
         case cancelled
     }
 
@@ -448,16 +457,19 @@ final class BudgetReservation: @unchecked Sendable {
     }
 
     func commit() throws -> RetainedBudgetLease {
-        lock.withLock {
+        try lock.withLock {
             switch state {
             case .pending:
                 let lease = budget.commit(byteCount: byteCount)
-                state = .committed(lease)
+                state = .committed(WeakRetainedLease(lease))
                 return lease
-            case let .committed(lease):
+            case let .committed(reference):
+                guard let lease = reference.value else {
+                    throw ContentReadError.reservationClosed
+                }
                 return lease
             case .cancelled:
-                return RetainedBudgetLease()
+                throw ContentReadError.reservationClosed
             }
         }
     }
@@ -476,7 +488,7 @@ final class BudgetReservation: @unchecked Sendable {
 }
 
 final class RetainedBudgetLease: @unchecked Sendable {
-    private let budget: InputBudget?
+    private let budget: InputBudget
     private let byteCount: UInt64
 
     fileprivate init(budget: InputBudget, byteCount: UInt64) {
@@ -484,13 +496,8 @@ final class RetainedBudgetLease: @unchecked Sendable {
         self.byteCount = byteCount
     }
 
-    fileprivate init() {
-        budget = nil
-        byteCount = 0
-    }
-
     deinit {
-        budget?.releaseRetained(byteCount: byteCount)
+        budget.releaseRetained(byteCount: byteCount)
     }
 }
 
@@ -703,6 +710,7 @@ private extension ContentReadError {
         switch self {
         case let .purposeTooLarge(reason): reason
         case .globalByteBudget: .globalByteBudget
+        case .reservationClosed: .unreadable
         case .unreadable: .unreadable
         case .identityChanged: .identityChanged
         case .cancelled: .cancelled

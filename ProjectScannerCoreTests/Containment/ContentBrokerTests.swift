@@ -257,6 +257,161 @@ final class ContentBrokerTests: XCTestCase {
         withExtendedLifetime((leases, releasedAdmission)) {}
     }
 
+    func testCancelledReservationCommitReturnsClosedAndCannotMintLease() throws {
+        let budget = InputBudget(limits: .defaults)
+        let reservation = try budget.reserve(
+            admittedFileBytes: 50 * 1_024 * 1_024,
+            for: .nodeLockfileParsing
+        )
+
+        reservation.cancel()
+        reservation.cancel()
+
+        XCTAssertThrowsError(try reservation.commit()) {
+            XCTAssertEqual($0 as? ContentReadError, .reservationClosed)
+        }
+        XCTAssertThrowsError(try reservation.commit()) {
+            XCTAssertEqual($0 as? ContentReadError, .reservationClosed)
+        }
+        let leases = try fillRetainedCapacity(budget)
+        XCTAssertEqual(leases.count, 5)
+        withExtendedLifetime(leases) {}
+    }
+
+    func testCommitWinnerIsIdempotentOnlyWhileTransferredLeaseLives() throws {
+        let budget = InputBudget(limits: .defaults)
+        let reservation = try budget.reserve(
+            admittedFileBytes: 50 * 1_024 * 1_024,
+            for: .nodeLockfileParsing
+        )
+        var first: RetainedBudgetLease? = try reservation.commit()
+
+        var repeated: RetainedBudgetLease? = try reservation.commit()
+        XCTAssertTrue(first === repeated)
+        reservation.cancel()
+        reservation.cancel()
+        first = nil
+        repeated = nil
+
+        XCTAssertThrowsError(try reservation.commit()) {
+            XCTAssertEqual($0 as? ContentReadError, .reservationClosed)
+        }
+    }
+
+    func testConcurrentCommitAndCancelOnSameReservationHasOneStableWinner() async throws {
+        let budget = InputBudget(limits: .defaults)
+        let reservation = try budget.reserve(
+            admittedFileBytes: 50 * 1_024 * 1_024,
+            for: .nodeLockfileParsing
+        )
+        let gate = ReservationRaceGate(participants: 2)
+        var winners = await withTaskGroup(
+            of: RetainedBudgetLease?.self,
+            returning: [RetainedBudgetLease].self
+        ) { group in
+            group.addTask {
+                await gate.arriveAndWait()
+                return try? reservation.commit()
+            }
+            group.addTask {
+                await gate.arriveAndWait()
+                reservation.cancel()
+                return nil
+            }
+            var leases: [RetainedBudgetLease] = []
+            for await lease in group {
+                if let lease { leases.append(lease) }
+            }
+            return leases
+        }
+
+        XCTAssertLessThanOrEqual(winners.count, 1)
+        if let winner = winners.first {
+            XCTAssertTrue(try reservation.commit() === winner)
+        } else {
+            XCTAssertThrowsError(try reservation.commit()) {
+                XCTAssertEqual($0 as? ContentReadError, .reservationClosed)
+            }
+        }
+        reservation.cancel()
+        reservation.cancel()
+        winners.removeAll(keepingCapacity: false)
+
+        let capacityLeases = try fillRetainedCapacity(budget)
+        XCTAssertEqual(capacityLeases.count, 5)
+        withExtendedLifetime(capacityLeases) {}
+    }
+
+    func testPendingReservationDeinitRollsBackInputAndRetainedCounters() throws {
+        let limits = try ScanLimitOverrides(inputBytes: 50 * 1_024 * 1_024).applying(to: .defaults)
+        let budget = InputBudget(limits: limits)
+        do {
+            _ = try budget.reserve(
+                admittedFileBytes: 50 * 1_024 * 1_024,
+                for: .nodeLockfileParsing
+            )
+        }
+
+        let lease = try budget.reserve(
+            admittedFileBytes: 50 * 1_024 * 1_024,
+            for: .nodeLockfileParsing
+        ).commit()
+        withExtendedLifetime(lease) {}
+    }
+
+    func testCommittedReservationDoesNotRetainTransferredLease() throws {
+        let budget = InputBudget(limits: .defaults)
+        let reservation = try budget.reserve(
+            admittedFileBytes: 50 * 1_024 * 1_024,
+            for: .nodeLockfileParsing
+        )
+        var transferred: RetainedBudgetLease? = try reservation.commit()
+        weak let released = transferred
+
+        transferred = nil
+
+        XCTAssertNil(released)
+        let leases = try fillRetainedCapacity(budget)
+        XCTAssertEqual(leases.count, 5)
+        withExtendedLifetime((reservation, leases)) {}
+    }
+
+    func testGlobalBudgetPrecedesPurposeLimitWhenBothReject() throws {
+        let limits = try ScanLimitOverrides(secretFileBytes: 4, inputBytes: 4).applying(to: .defaults)
+        let exhaustedBudget = InputBudget(limits: limits)
+        let admitted = try exhaustedBudget.reserve(
+            admittedFileBytes: 4,
+            for: .secretInspection
+        ).commit()
+
+        XCTAssertThrowsError(try exhaustedBudget.reserve(
+            admittedFileBytes: 5,
+            for: .secretInspection
+        )) {
+            XCTAssertEqual($0 as? ContentReadError, .globalByteBudget)
+        }
+
+        let retainedBudget = InputBudget(limits: .defaults)
+        let retainedLeases = try fillRetainedCapacity(retainedBudget)
+        XCTAssertThrowsError(try retainedBudget.reserve(
+            admittedFileBytes: 10 * 1_024 * 1_024,
+            for: .packageManifestParsing
+        )) {
+            XCTAssertEqual($0 as? ContentReadError, .globalByteBudget)
+        }
+
+        let purposeOnlyLimits = try ScanLimitOverrides(secretFileBytes: 4, inputBytes: 6)
+            .applying(to: .defaults)
+        let freshBudget = InputBudget(limits: purposeOnlyLimits)
+        XCTAssertThrowsError(try freshBudget.reserve(
+            admittedFileBytes: 5,
+            for: .secretInspection
+        )) {
+            XCTAssertEqual($0 as? ContentReadError, .purposeTooLarge(.ordinaryFileTooLarge))
+        }
+        withExtendedLifetime((admitted, retainedLeases)) {}
+    }
+
     func testReplacementBeforeReadReturnsIdentityChanged() async throws {
         let fixture = try TemporaryProjectFixture()
         defer { fixture.remove() }
@@ -438,6 +593,15 @@ private extension ContentBrokerTests {
         }
     }
 
+    func fillRetainedCapacity(_ budget: InputBudget) throws -> [RetainedBudgetLease] {
+        try (0..<5).map { _ in
+            try budget.reserve(
+                admittedFileBytes: 50 * 1_024 * 1_024,
+                for: .nodeLockfileParsing
+            ).commit()
+        }
+    }
+
     func requireOperationalRead(_ broker: FileBroker, candidate: FileCandidate) async -> Bool {
         guard case .admitted = await broker.makeContentBroker().read(candidate, for: .secretInspection) else {
             XCTFail("Content scaffold did not perform the prerequisite read")
@@ -470,4 +634,27 @@ private extension ContentBrokerTests {
 
 private func patternedData(count: Int) -> Data {
     Data((0..<count).map { UInt8(truncatingIfNeeded: $0) })
+}
+
+private actor ReservationRaceGate {
+    private let participants: Int
+    private var arrivals = 0
+    private var waiters: [CheckedContinuation<Void, Never>] = []
+
+    init(participants: Int) {
+        precondition(participants > 0)
+        self.participants = participants
+    }
+
+    func arriveAndWait() async {
+        arrivals += 1
+        if arrivals == participants {
+            waiters.forEach { $0.resume() }
+            waiters.removeAll(keepingCapacity: false)
+            return
+        }
+        await withCheckedContinuation { continuation in
+            waiters.append(continuation)
+        }
+    }
 }
