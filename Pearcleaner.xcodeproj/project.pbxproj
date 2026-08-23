@@ -8,6 +8,8 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		A20000000000000000000009 /* libProjectScannerCore.a in Frameworks */ = {isa = PBXBuildFile; fileRef = A20000000000000000000001 /* libProjectScannerCore.a */; };
+		A2000000000000000000000A /* libProjectScannerCore.a in Frameworks */ = {isa = PBXBuildFile; fileRef = A20000000000000000000001 /* libProjectScannerCore.a */; };
 		A12700000000000000000001 /* PrivilegedOperation.swift in Sources */ = {isa = PBXBuildFile; fileRef = A12700000000000000000002 /* PrivilegedOperation.swift */; };
 		A12700000000000000000003 /* PrivilegedOperation.swift in Sources */ = {isa = PBXBuildFile; fileRef = A12700000000000000000002 /* PrivilegedOperation.swift */; };
 		A12600000000000000000001 /* PearcleanerPreferencesStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = A12600000000000000000002 /* PearcleanerPreferencesStore.swift */; };
@@ -61,6 +63,20 @@
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
+		A2000000000000000000000B /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = C77B8FF82AF18E2E009CC655 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = A20000000000000000000015;
+			remoteInfo = ProjectScannerCore;
+		};
+		A2000000000000000000000C /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = C77B8FF82AF18E2E009CC655 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = A20000000000000000000015;
+			remoteInfo = ProjectScannerCore;
+		};
 		A1240000000000000000000A /* PBXContainerItemProxy */ = {
 			isa = PBXContainerItemProxy;
 			containerPortal = C77B8FF82AF18E2E009CC655 /* Project object */;
@@ -140,6 +156,8 @@
 /* End PBXCopyFilesBuildPhase section */
 
 /* Begin PBXFileReference section */
+		A20000000000000000000001 /* libProjectScannerCore.a */ = {isa = PBXFileReference; explicitFileType = archive.ar; includeInIndex = 0; path = libProjectScannerCore.a; sourceTree = BUILT_PRODUCTS_DIR; };
+		A20000000000000000000002 /* ProjectScannerCoreTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = ProjectScannerCoreTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		A12400000000000000000001 /* PearcleanerTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = PearcleanerTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		A12500000000000000000002 /* SentinelServiceManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SentinelServiceManager.swift; sourceTree = "<group>"; };
 		A12600000000000000000002 /* PearcleanerPreferencesStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PearcleanerPreferencesStore.swift; sourceTree = "<group>"; };
@@ -253,6 +271,8 @@
 /* End PBXFileSystemSynchronizedGroupBuildPhaseMembershipExceptionSet section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
+		A20000000000000000000003 /* ProjectScannerCore */ = {isa = PBXFileSystemSynchronizedRootGroup; explicitFileTypes = {}; explicitFolders = (); path = ProjectScannerCore; sourceTree = "<group>"; };
+		A20000000000000000000004 /* ProjectScannerCoreTests */ = {isa = PBXFileSystemSynchronizedRootGroup; explicitFileTypes = {}; explicitFolders = (); path = ProjectScannerCoreTests; sourceTree = "<group>"; };
 		A12400000000000000000002 /* PearcleanerTests */ = {isa = PBXFileSystemSynchronizedRootGroup; explicitFileTypes = {}; explicitFolders = (); path = PearcleanerTests; sourceTree = "<group>"; };
 		C71B87562EF49C58009C5B07 /* TCC */ = {isa = PBXFileSystemSynchronizedRootGroup; explicitFileTypes = {}; explicitFolders = (); path = TCC; sourceTree = "<group>"; };
 		C71DC3392EAAAFF000503474 /* Components */ = {isa = PBXFileSystemSynchronizedRootGroup; explicitFileTypes = {}; explicitFolders = (); path = Components; sourceTree = "<group>"; };
@@ -273,6 +293,21 @@
 /* End PBXFileSystemSynchronizedRootGroup section */
 
 /* Begin PBXFrameworksBuildPhase section */
+		A20000000000000000000005 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		A20000000000000000000006 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				A20000000000000000000009 /* libProjectScannerCore.a in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 		A12400000000000000000005 /* Frameworks */ = {
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
@@ -299,6 +334,7 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				A2000000000000000000000A /* libProjectScannerCore.a in Frameworks */,
 				C707E2942EAF217200AAD817 /* Sparkle in Frameworks */,
 				C76EDCD62C45DC82000CF29D /* AlinFoundation in Frameworks */,
 				C7A2A4D92DDB95C4006E05E4 /* ArgumentParser in Frameworks */,
@@ -386,6 +422,8 @@
 				C75E82DD2E8C58380090C3B1 /* Shared */,
 				C77B90022AF18E2E009CC655 /* Pearcleaner */,
 				A12400000000000000000002 /* PearcleanerTests */,
+				A20000000000000000000003 /* ProjectScannerCore */,
+				A20000000000000000000004 /* ProjectScannerCoreTests */,
 				C72893102AFD51EA00C8C1CD /* PearcleanerSentinel */,
 				C78121642BC892A000BE06BD /* FinderOpen */,
 				C73545F12D849A1B00A3DC0C /* PearcleanerHelper */,
@@ -399,6 +437,8 @@
 			children = (
 				C77B90002AF18E2E009CC655 /* Pearcleaner.app */,
 				A12400000000000000000001 /* PearcleanerTests.xctest */,
+				A20000000000000000000001 /* libProjectScannerCore.a */,
+				A20000000000000000000002 /* ProjectScannerCoreTests.xctest */,
 				C728930F2AFD51EA00C8C1CD /* PearcleanerSentinel */,
 				C78121632BC892A000BE06BD /* FinderOpen.appex */,
 				C73545F02D849A1B00A3DC0C /* PearcleanerHelper */,
@@ -458,6 +498,49 @@
 /* End PBXGroup section */
 
 /* Begin PBXNativeTarget section */
+		A20000000000000000000015 /* ProjectScannerCore */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = A20000000000000000000011 /* Build configuration list for PBXNativeTarget "ProjectScannerCore" */;
+			buildPhases = (
+				A20000000000000000000007 /* Sources */,
+				A20000000000000000000005 /* Frameworks */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			fileSystemSynchronizedGroups = (
+				A20000000000000000000003 /* ProjectScannerCore */,
+			);
+			name = ProjectScannerCore;
+			packageProductDependencies = (
+			);
+			productName = ProjectScannerCore;
+			productReference = A20000000000000000000001 /* libProjectScannerCore.a */;
+			productType = "com.apple.product-type.library.static";
+		};
+		A20000000000000000000016 /* ProjectScannerCoreTests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = A20000000000000000000014 /* Build configuration list for PBXNativeTarget "ProjectScannerCoreTests" */;
+			buildPhases = (
+				A20000000000000000000008 /* Sources */,
+				A20000000000000000000006 /* Frameworks */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				A2000000000000000000000D /* PBXTargetDependency */,
+			);
+			fileSystemSynchronizedGroups = (
+				A20000000000000000000004 /* ProjectScannerCoreTests */,
+			);
+			name = ProjectScannerCoreTests;
+			packageProductDependencies = (
+			);
+			productName = ProjectScannerCoreTests;
+			productReference = A20000000000000000000002 /* ProjectScannerCoreTests.xctest */;
+			productType = "com.apple.product-type.bundle.unit-test";
+		};
 		A12400000000000000000003 /* PearcleanerTests */ = {
 			isa = PBXNativeTarget;
 			buildConfigurationList = A12400000000000000000007 /* Build configuration list for PBXNativeTarget "PearcleanerTests" */;
@@ -540,6 +623,7 @@
 			);
 			dependencies = (
 				C781216A2BC892A000BE06BD /* PBXTargetDependency */,
+				A2000000000000000000000E /* PBXTargetDependency */,
 			);
 			fileSystemSynchronizedGroups = (
 				C71B87562EF49C58009C5B07 /* TCC */,
@@ -604,6 +688,12 @@
 					C77B8FFF2AF18E2E009CC655 = {
 						CreatedOnToolsVersion = 15.0.1;
 					};
+					A20000000000000000000015 = {
+						CreatedOnToolsVersion = 26.0;
+					};
+					A20000000000000000000016 = {
+						CreatedOnToolsVersion = 26.0;
+					};
 					C78121622BC892A000BE06BD = {
 						CreatedOnToolsVersion = 15.3;
 					};
@@ -652,6 +742,8 @@
 			targets = (
 				C77B8FFF2AF18E2E009CC655 /* Pearcleaner */,
 				A12400000000000000000003 /* PearcleanerTests */,
+				A20000000000000000000015 /* ProjectScannerCore */,
+				A20000000000000000000016 /* ProjectScannerCoreTests */,
 				C728930E2AFD51EA00C8C1CD /* PearcleanerSentinel */,
 				C78121622BC892A000BE06BD /* FinderOpen */,
 				C73545EF2D849A1B00A3DC0C /* PearcleanerHelper */,
@@ -689,6 +781,20 @@
 /* End PBXResourcesBuildPhase section */
 
 /* Begin PBXSourcesBuildPhase section */
+		A20000000000000000000007 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		A20000000000000000000008 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 		A12400000000000000000004 /* Sources */ = {
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
@@ -762,6 +868,16 @@
 /* End PBXSourcesBuildPhase section */
 
 /* Begin PBXTargetDependency section */
+		A2000000000000000000000D /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = A20000000000000000000015 /* ProjectScannerCore */;
+			targetProxy = A2000000000000000000000B /* PBXContainerItemProxy */;
+		};
+		A2000000000000000000000E /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = A20000000000000000000015 /* ProjectScannerCore */;
+			targetProxy = A2000000000000000000000C /* PBXContainerItemProxy */;
+		};
 		A1240000000000000000000B /* PBXTargetDependency */ = {
 			isa = PBXTargetDependency;
 			target = C77B8FFF2AF18E2E009CC655 /* Pearcleaner */;
@@ -775,6 +891,64 @@
 /* End PBXTargetDependency section */
 
 /* Begin XCBuildConfiguration section */
+		A2000000000000000000000F /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				DEFINES_MODULE = YES;
+				MACH_O_TYPE = staticlib;
+				MACOSX_DEPLOYMENT_TARGET = 13.0;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = macosx;
+				SKIP_INSTALL = YES;
+				SUPPORTED_PLATFORMS = macosx;
+				SWIFT_STRICT_CONCURRENCY = complete;
+				SWIFT_VERSION = 5.0;
+			};
+			name = Debug;
+		};
+		A20000000000000000000010 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				DEFINES_MODULE = YES;
+				MACH_O_TYPE = staticlib;
+				MACOSX_DEPLOYMENT_TARGET = 13.0;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = macosx;
+				SKIP_INSTALL = YES;
+				SUPPORTED_PLATFORMS = macosx;
+				SWIFT_STRICT_CONCURRENCY = complete;
+				SWIFT_VERSION = 5.0;
+			};
+			name = Release;
+		};
+		A20000000000000000000012 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "";
+				GENERATE_INFOPLIST_FILE = YES;
+				MACOSX_DEPLOYMENT_TARGET = 13.0;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = macosx;
+				SWIFT_STRICT_CONCURRENCY = complete;
+				SWIFT_VERSION = 5.0;
+				TEST_HOST = "";
+			};
+			name = Debug;
+		};
+		A20000000000000000000013 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "";
+				GENERATE_INFOPLIST_FILE = YES;
+				MACOSX_DEPLOYMENT_TARGET = 13.0;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = macosx;
+				SWIFT_STRICT_CONCURRENCY = complete;
+				SWIFT_VERSION = 5.0;
+				TEST_HOST = "";
+			};
+			name = Release;
+		};
 		A12400000000000000000008 /* Debug */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
@@ -1250,6 +1424,24 @@
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
+		A20000000000000000000011 /* Build configuration list for PBXNativeTarget "ProjectScannerCore" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				A2000000000000000000000F /* Debug */,
+				A20000000000000000000010 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		A20000000000000000000014 /* Build configuration list for PBXNativeTarget "ProjectScannerCoreTests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				A20000000000000000000012 /* Debug */,
+				A20000000000000000000013 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
 		A12400000000000000000007 /* Build configuration list for PBXNativeTarget "PearcleanerTests" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (
