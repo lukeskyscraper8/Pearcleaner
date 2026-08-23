@@ -398,6 +398,22 @@ final class FileBrokerIntegrationTests: XCTestCase {
         XCTAssertEqual(revalidation, .valid)
     }
 
+    func testNestedLinkProofKeepsInitiatingLogicalAlias() throws {
+        let alias = try VerifiedRelativePath(components: [
+            VerifiedPathComponent(bytes: Data("alias".utf8)),
+            VerifiedPathComponent(bytes: Data("child".utf8))
+        ])
+        let physical = try VerifiedRelativePath(components: [
+            VerifiedPathComponent(bytes: Data("real".utf8)),
+            VerifiedPathComponent(bytes: Data("hidden-link".utf8))
+        ])
+
+        let location = FileBrokerPlatform.nestedLinkProofLogicalLocation(initiating: alias)
+
+        XCTAssertEqual(location, alias)
+        XCTAssertNotEqual(location, physical)
+    }
+
     func testForeignBrokerRejectsCandidate() async throws {
         let first = try TemporaryProjectFixture()
         defer { first.remove() }

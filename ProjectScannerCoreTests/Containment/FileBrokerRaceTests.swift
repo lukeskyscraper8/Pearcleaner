@@ -340,7 +340,7 @@ final class FileBrokerRaceTests: XCTestCase {
         let broker = try capability.makeFileBroker(limits: .defaults)
         let traversal = try await broker.makeTraversal()
         let activeCount = await broker.openTraversalDirectoryDescriptorCount()
-        XCTAssertGreaterThan(activeCount, 0)
+        XCTAssertEqual(activeCount, 1)
 
         while try await traversal.next() != nil {}
 

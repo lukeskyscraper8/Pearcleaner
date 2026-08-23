@@ -261,6 +261,12 @@ enum LinkProbeDecoding: Sendable, Equatable {
 }
 
 enum FileBrokerPlatform {
+    static func nestedLinkProofLogicalLocation(
+        initiating location: VerifiedRelativePath
+    ) -> VerifiedRelativePath {
+        location
+    }
+
     static func classify(mode: mode_t) -> FileSystemNodeKind {
         switch mode & S_IFMT {
         case S_IFREG: .regular
@@ -491,7 +497,6 @@ actor FileBroker {
 
 actor FileTraversal {
     private var stack: [DirectoryFrame]
-    private let retainedRootDescriptor: OwnedFileDescriptor
     private let rootIdentity: FileIdentity
     private let limits: ScanLimits
     private let brokerNonce: UUID
@@ -517,7 +522,6 @@ actor FileTraversal {
         self.brokerNonce = brokerNonce
         self.testControl = testControl
         self.descriptorAccounting = descriptorAccounting
-        retainedRootDescriptor = try rootDescriptor.duplicate(accounting: descriptorAccounting)
         stack = [try DirectoryFrame(
             descriptor: rootDescriptor,
             logicalComponents: [],
@@ -633,7 +637,6 @@ actor FileTraversal {
         }
 
         isFinished = true
-        retainedRootDescriptor.closeIfNeeded()
         return nil
     }
 
@@ -785,6 +788,7 @@ actor FileTraversal {
         let result = await resolveTarget(
             target,
             from: frame,
+            initiatingLogicalLocation: logicalPath,
             proofs: frame.linkProof + [proof],
             linkHops: nextHops
         )
@@ -858,6 +862,7 @@ actor FileTraversal {
     private func resolveTarget(
         _ target: Data,
         from frame: DirectoryFrame,
+        initiatingLogicalLocation: VerifiedRelativePath,
         proofs initialProofs: [LinkProof],
         linkHops initialHops: UInt32
     ) async -> ResolvedTarget {
@@ -958,13 +963,10 @@ actor FileTraversal {
                     return .skipped(.externalBoundary)
                 }
                 let linkComponents = physicalComponents + [component]
-                guard let location = verifiedPath(linkComponents.compactMap {
-                    try? VerifiedPathComponent(bytes: $0)
-                }), location.components.count == linkComponents.count else {
-                    return .skipped(.pathTooLong)
-                }
                 proofs.append(LinkProof(
-                    logicalLocation: location,
+                    logicalLocation: FileBrokerPlatform.nestedLinkProofLogicalLocation(
+                        initiating: initiatingLogicalLocation
+                    ),
                     physicalComponents: linkComponents,
                     inspectedIdentity: inspected,
                     targetBytes: nestedTarget
@@ -1088,7 +1090,6 @@ actor FileTraversal {
         let frames = stack
         stack.removeAll(keepingCapacity: false)
         frames.forEach { $0.close() }
-        retainedRootDescriptor.closeIfNeeded()
     }
 
     private func stopForCancellationIfNeeded() -> Bool {
@@ -1101,7 +1102,10 @@ actor FileTraversal {
         guard let leaf = proof.physicalComponents.last else {
             throw FileAccessFailure(reason: .identityChanged)
         }
-        var current = try retainedRootDescriptor.duplicate(accounting: descriptorAccounting)
+        guard let rootFrame = stack.first else {
+            throw FileAccessFailure(reason: .unreadable)
+        }
+        var current = try rootFrame.duplicateOwnedDescriptor(accounting: descriptorAccounting)
         for component in proof.physicalComponents.dropLast() {
             let inspected = try current.withFileDescriptor { descriptor in
                 try inspect(component, relativeTo: descriptor)
