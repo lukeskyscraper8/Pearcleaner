@@ -1,7 +1,7 @@
 # Developer Exposure Inspector: Scanner Boundary Design
 
 **Date:** 2026-08-23
-**Status:** Scanner design approved; Git sandbox amendment requires spec review; implementation is not approved
+**Status:** Approved design, including the Git sandbox amendment; implementation is not approved
 **Scope:** The first security-scanning workstream inside Pearcleaner
 **Working label:** “Developer Exposure Inspector” identifies this document; it is not approved product or UI naming
 
