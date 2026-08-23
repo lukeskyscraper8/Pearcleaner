@@ -55,6 +55,9 @@ struct PrivacyRedactor: Sendable {
 
         var outputSegments: [RedactedOutputSegment] = []
         var scalarCount = 0
+        defer {
+            metrics = RedactionMetrics(peakRetainedOutputScalars: scalarCount)
+        }
         var presentationOpen = true
         guard streamValidatedUTF8(
             utf8,
@@ -72,7 +75,6 @@ struct PrivacyRedactor: Sendable {
             return .metadataOnly
         }
 
-        metrics = RedactionMetrics(peakRetainedOutputScalars: scalarCount)
         guard let limited = joinValidatedSegments(
             &outputSegments,
             scalarLimit: Self.outputScalarLimit

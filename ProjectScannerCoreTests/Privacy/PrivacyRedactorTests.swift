@@ -105,15 +105,91 @@ final class PrivacyRedactorTests: XCTestCase {
     }
 
     func testMalformedUTF8ReturnsMetadataOnly() throws {
-        var source = [UInt8](repeating: UInt8(ascii: "a"), count: 300)
-        source.append(0xFF)
+        let malformedSequences: [(name: String, bytes: [UInt8])] = [
+            ("stray continuation", [0x80]),
+            ("C0 overlong", [0xC0, 0x80]),
+            ("C1 overlong", [0xC1, 0xBF]),
+            ("E0 overlong", [0xE0, 0x80, 0x80]),
+            ("F0 overlong", [0xF0, 0x80, 0x80, 0x80]),
+            ("surrogate", [0xED, 0xA0, 0x80]),
+            ("above U+10FFFF", [0xF4, 0x90, 0x80, 0x80]),
+            ("F5 lead", [0xF5, 0x80, 0x80, 0x80]),
+            ("truncated two-byte", [0xC2]),
+            ("truncated three-byte", [0xE2, 0x82]),
+            ("truncated four-byte", [0xF0, 0x9F, 0x99]),
+            ("invalid continuation", [0xE2, 0x28, 0xA1])
+        ]
+        let secret = Array(PrivacyCanaries.secret.utf8)
 
-        let result = redact(source, spans: [0..<1])
+        for malformed in malformedSequences {
+            let maskedSource = [UInt8(ascii: "a")] + malformed.bytes
+            var maskedRedactor = makeRedactor()
+            let maskedResult = maskedSource.withUnsafeBytes {
+                maskedRedactor.redact(
+                    utf8: $0,
+                    ruleResults: [
+                        .complete(
+                            ruleID: primaryRule,
+                            spans: [RedactionSpan(utf8Range: 0..<maskedSource.count)]
+                        ),
+                        .complete(ruleID: secondaryRule, spans: [])
+                    ]
+                )
+            }
+            XCTAssertEqual(maskedResult, .metadataOnly, malformed.name)
+            XCTAssertEqual(maskedRedactor.metrics.peakRetainedOutputScalars, 10, malformed.name)
 
-        XCTAssertEqual(result, .metadataOnly)
+            var afterClosure = secret
+            afterClosure.append(
+                contentsOf: [UInt8](repeating: UInt8(ascii: "a"), count: 230)
+            )
+            afterClosure.append(UInt8(ascii: "z"))
+            afterClosure.append(contentsOf: malformed.bytes)
+            var closedRedactor = makeRedactor()
+            let closedResult = afterClosure.withUnsafeBytes {
+                closedRedactor.redact(
+                    utf8: $0,
+                    ruleResults: [
+                        .complete(
+                            ruleID: primaryRule,
+                            spans: [
+                                RedactionSpan(
+                                    utf8Range: 0..<secret.count
+                                )
+                            ]
+                        ),
+                        .complete(ruleID: secondaryRule, spans: [])
+                    ]
+                )
+            }
+            XCTAssertEqual(closedResult, .metadataOnly, malformed.name)
+            XCTAssertEqual(
+                closedRedactor.metrics.peakRetainedOutputScalars,
+                240,
+                malformed.name
+            )
+        }
 
-        let malformedMaskedBytes: [UInt8] = [UInt8(ascii: "a"), 0xFF, UInt8(ascii: "b")]
-        XCTAssertEqual(redact(malformedMaskedBytes, spans: [0..<3]), .metadataOnly)
+        var beforeOutput: [UInt8] = [0x80]
+        let secretStart = beforeOutput.count
+        beforeOutput.append(contentsOf: secret)
+        var beforeOutputRedactor = makeRedactor()
+        let beforeOutputResult = beforeOutput.withUnsafeBytes {
+            beforeOutputRedactor.redact(
+                utf8: $0,
+                ruleResults: [
+                    .complete(
+                        ruleID: primaryRule,
+                        spans: [
+                            RedactionSpan(utf8Range: secretStart..<secretStart + secret.count)
+                        ]
+                    ),
+                    .complete(ruleID: secondaryRule, spans: [])
+                ]
+            )
+        }
+        XCTAssertEqual(beforeOutputResult, .metadataOnly)
+        XCTAssertEqual(beforeOutputRedactor.metrics.peakRetainedOutputScalars, 0)
     }
 
     func testSpanInsideAMultibyteScalarReturnsMetadataOnly() throws {
