@@ -73,10 +73,13 @@ public actor ProjectKeyCoordinator {
     }
 
     public func access(for state: ExistingKeyedState) async throws -> ProjectKeyAccess {
-        await operationGate.acquire()
+        try await operationGate.acquire()
         defer { operationGate.release() }
+        try throwIfCancelled()
 
-        switch await store.read() {
+        let read = await store.read()
+        try throwIfCancelled()
+        switch read {
         case .found(let material):
             switch state {
             case .none:
@@ -89,7 +92,9 @@ public actor ProjectKeyCoordinator {
         case .missing:
             guard state == .none else { return .resetRequired }
             let proposed = try generateMaterial()
-            switch await store.createIfMissing(proposed) {
+            try throwIfCancelled()
+            let created = await store.createIfMissing(proposed)
+            switch created {
             case .created(let material), .existing(let material):
                 return .ready(.persistent(material))
             case .invalidRecord:
@@ -100,7 +105,9 @@ public actor ProjectKeyCoordinator {
         case .invalidRecord:
             return .resetRequired
         case .unavailable:
-            return .ready(.ephemeral(try generateMaterial()))
+            let proposed = try generateMaterial()
+            try throwIfCancelled()
+            return .ready(.ephemeral(proposed))
         }
     }
 
@@ -108,10 +115,19 @@ public actor ProjectKeyCoordinator {
         guard case .persistent(let generation) = lease.persistence else {
             return .ephemeralOnly
         }
-        await operationGate.acquire()
+        do {
+            try await operationGate.acquire()
+        } catch is CancellationError {
+            return .ephemeralOnly
+        } catch {
+            return .ephemeralOnly
+        }
         defer { operationGate.release() }
+        guard !Task.isCancelled else { return .ephemeralOnly }
 
-        switch await store.read() {
+        let read = await store.read()
+        guard !Task.isCancelled else { return .ephemeralOnly }
+        switch read {
         case .found(let material) where material.generation == generation:
             return .valid
         case .unavailable:
@@ -142,34 +158,69 @@ public actor ProjectKeyCoordinator {
             throw ProjectKeyCoordinatorError.keyGenerationFailed
         }
     }
+
+    private func throwIfCancelled() throws {
+        guard !Task.isCancelled else { throw CancellationError() }
+    }
 }
 
 private final class FIFOOperationGate: @unchecked Sendable {
+    private struct Waiter {
+        let id: UUID
+        let continuation: CheckedContinuation<Void, Error>
+    }
+
     private let lock = NSLock()
     private var isHeld = false
-    private var waiters: [CheckedContinuation<Void, Never>] = []
+    private var waiters: [Waiter] = []
 
-    func acquire() async {
-        await withCheckedContinuation { continuation in
-            lock.lock()
-            if isHeld {
-                waiters.append(continuation)
-            } else {
-                isHeld = true
-                continuation.resume()
+    func acquire() async throws {
+        try Task.checkCancellation()
+        let waiterID = UUID()
+        try await withTaskCancellationHandler(operation: { () async throws -> Void in
+            try await withCheckedThrowingContinuation {
+                (continuation: CheckedContinuation<Void, Error>) in
+                lock.lock()
+                if Task.isCancelled {
+                    lock.unlock()
+                    continuation.resume(throwing: CancellationError())
+                } else if isHeld {
+                    waiters.append(Waiter(id: waiterID, continuation: continuation))
+                    lock.unlock()
+                } else {
+                    isHeld = true
+                    lock.unlock()
+                    continuation.resume()
+                }
             }
-            lock.unlock()
+        }, onCancel: { [weak self] in
+            self?.cancelWaiter(id: waiterID)
+        })
+        if Task.isCancelled {
+            release()
+            throw CancellationError()
         }
     }
 
     func release() {
         lock.lock()
-        let next = waiters.isEmpty ? nil : waiters.removeFirst()
+        let next = waiters.isEmpty ? nil : waiters.removeFirst().continuation
         if next == nil {
             isHeld = false
         }
         lock.unlock()
         next?.resume()
+    }
+
+    private func cancelWaiter(id: UUID) {
+        lock.lock()
+        guard let index = waiters.firstIndex(where: { $0.id == id }) else {
+            lock.unlock()
+            return
+        }
+        let waiter = waiters.remove(at: index)
+        lock.unlock()
+        waiter.continuation.resume(throwing: CancellationError())
     }
 }
 

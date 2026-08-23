@@ -58,6 +58,41 @@ final class ProjectKeyCoordinatorTests: XCTestCase {
             firstLease.material.secureStorageRecord(),
             secondLease.material.secureStorageRecord()
         )
+
+        let cancellationStore = ScriptedKeyStore(pauseFirstRead: true)
+        let cancellationCoordinator = makeCoordinator(
+            store: cancellationStore,
+            randomBytes: [keyBytes(0x71), keyBytes(0x72)],
+            uuids: [uuid(71), uuid(72)]
+        )
+        let holder = Task { try await cancellationCoordinator.access(for: .none) }
+        guard await cancellationStore.waitUntilFirstReadPaused(timeoutNanoseconds: 1_000_000_000) else {
+            await cancellationStore.resumeFirstRead()
+            _ = try await holder.value
+            XCTFail("Timed out waiting for cancellation holder read pause")
+            return
+        }
+        let cancellationStarted = AsyncStartMarker()
+        let cancelled = Task {
+            await cancellationStarted.markStarted()
+            return try await cancellationCoordinator.access(for: .none)
+        }
+        await cancellationStarted.waitUntilStarted()
+        await Task.yield()
+        cancelled.cancel()
+        await Task.yield()
+        await cancellationStore.resumeFirstRead()
+
+        let holderLease = try readyLease(try await holder.value)
+        await XCTAssertThrowsCancellation(try await cancelled.value)
+        let cancellationSnapshot = await cancellationStore.snapshot()
+        XCTAssertEqual(
+            cancellationSnapshot.calls,
+            [.read, .create(generation: holderLease.material.generation)]
+        )
+        let cancellationCreateCount = await cancellationStore.createCallCount()
+        XCTAssertEqual(cancellationCreateCount, 1)
+        XCTAssertEqual(cancellationSnapshot.stored?.secureStorageRecord(), holderLease.material.secureStorageRecord())
     }
 
     func testExistingKeyWithoutProjectStateCanBeReused() async throws {
@@ -330,5 +365,18 @@ private func XCTAssertThrowsErrorAsync<T>(
         XCTFail("Expected an error")
     } catch {
         handler(error)
+    }
+}
+
+private func XCTAssertThrowsCancellation<T>(
+    _ expression: @autoclosure () async throws -> T
+) async {
+    do {
+        _ = try await expression()
+        XCTFail("Expected CancellationError")
+    } catch is CancellationError {
+        // Expected.
+    } catch {
+        XCTFail("Expected CancellationError, got \(error)")
     }
 }
