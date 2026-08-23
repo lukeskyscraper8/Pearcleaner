@@ -1,3 +1,5 @@
+import Foundation
+
 public protocol ScannerDiagnosticSinking: Sendable {
     func record(_ event: ScannerDiagnosticEvent) async
 }
@@ -24,6 +26,14 @@ public enum StoredKeyCreate: Sendable {
 public protocol ProjectKeyMaterialStoring: Sendable {
     func read() async -> StoredKeyRead
     func createIfMissing(_ material: ProjectKeyMaterial) async -> StoredKeyCreate
+}
+
+protocol SecureRandomGenerating: Sendable {
+    func bytes(count: Int) throws -> Data
+}
+
+protocol UUIDGenerating: Sendable {
+    func makeUUID() -> UUID
 }
 
 public protocol ScannerEnvironmentProviding: Sendable {
