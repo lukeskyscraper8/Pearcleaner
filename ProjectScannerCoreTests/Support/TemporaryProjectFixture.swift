@@ -3,7 +3,7 @@ import CryptoKit
 import Foundation
 @testable import ProjectScannerCore
 
-final class TemporaryProjectFixture {
+final class TemporaryProjectFixture: @unchecked Sendable {
     let url: URL
     let outsideCanaryURL: URL
 
@@ -217,6 +217,49 @@ final class TemporaryProjectFixture {
 
     func hardLink(from source: URL, to destination: URL) throws {
         guard link(source.path, destination.path) == 0 else { throw CocoaError(.fileWriteUnknown) }
+    }
+
+    func replaceRegularFile(at file: URL, contents: Data) throws {
+        try FileManager.default.removeItem(at: file)
+        guard FileManager.default.createFile(atPath: file.path, contents: contents) else {
+            throw CocoaError(.fileWriteUnknown)
+        }
+    }
+
+    func replaceWithFIFO(at file: URL) throws {
+        try FileManager.default.removeItem(at: file)
+        try fifo(at: file)
+    }
+
+    func overwriteRegularFile(at file: URL, contents: Data) throws {
+        let descriptor = open(file.path, O_WRONLY | O_TRUNC | O_CLOEXEC)
+        guard descriptor >= 0 else { throw CocoaError(.fileWriteUnknown) }
+        defer { Darwin.close(descriptor) }
+        try contents.withUnsafeBytes { buffer in
+            var offset = 0
+            while offset < buffer.count {
+                let count = Darwin.write(
+                    descriptor,
+                    buffer.baseAddress!.advanced(by: offset),
+                    buffer.count - offset
+                )
+                guard count > 0 else { throw CocoaError(.fileWriteUnknown) }
+                offset += count
+            }
+        }
+    }
+
+    func restoreModificationTime(of file: URL, to identity: FileIdentity) throws {
+        var times = [
+            timespec(tv_sec: 0, tv_nsec: Int(UTIME_OMIT)),
+            timespec(
+                tv_sec: time_t(identity.modificationSeconds),
+                tv_nsec: Int(identity.modificationNanoseconds)
+            ),
+        ]
+        guard utimensat(AT_FDCWD, file.path, &times, 0) == 0 else {
+            throw CocoaError(.fileWriteUnknown)
+        }
     }
 
     func fifo(at path: URL) throws {

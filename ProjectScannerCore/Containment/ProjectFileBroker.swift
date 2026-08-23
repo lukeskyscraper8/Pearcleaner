@@ -332,12 +332,389 @@ fileprivate final class OpenedReadFile: @unchecked Sendable {
     func close() {
         descriptor.closeIfNeeded()
     }
+
+    func withFileDescriptor<T>(_ body: (Int32) throws -> T) throws -> T {
+        try descriptor.withFileDescriptor(body)
+    }
+}
+
+enum ContentPurpose: Sendable, Equatable, Hashable {
+    case secretInspection
+    case nodeLockfileParsing
+    case packageManifestParsing
+}
+
+enum ContentReadError: Error, Sendable, Equatable {
+    case purposeTooLarge(CoverageReasonCode)
+    case globalByteBudget
+    case unreadable
+    case identityChanged
+    case cancelled
+}
+
+final class InputBudget: @unchecked Sendable {
+    private let lock = NSLock()
+    private let limits: ScanLimits
+    private var admittedInputBytes: UInt64 = 0
+    private var pendingInputBytes: UInt64 = 0
+    private var retainedBytes: UInt64 = 0
+
+    init(limits: ScanLimits) {
+        self.limits = limits
+    }
+
+    func reserve(
+        admittedFileBytes: UInt64,
+        for purpose: ContentPurpose
+    ) throws -> BudgetReservation {
+        try lock.withLock {
+            guard admittedFileBytes <= limit(for: purpose) else {
+                throw ContentReadError.purposeTooLarge(purpose.oversizedReason)
+            }
+            let (admittedAndPending, pendingOverflow) = admittedInputBytes
+                .addingReportingOverflow(pendingInputBytes)
+            let (nextInput, inputOverflow) = admittedAndPending
+                .addingReportingOverflow(admittedFileBytes)
+            let (nextRetained, retainedOverflow) = retainedBytes
+                .addingReportingOverflow(admittedFileBytes)
+            guard !pendingOverflow,
+                  !inputOverflow,
+                  nextInput <= limits.inputBytes,
+                  !retainedOverflow,
+                  nextRetained <= limits.retainedInputBytes else {
+                throw ContentReadError.globalByteBudget
+            }
+            pendingInputBytes += admittedFileBytes
+            retainedBytes = nextRetained
+            return BudgetReservation(budget: self, byteCount: admittedFileBytes)
+        }
+    }
+
+    fileprivate func commit(byteCount: UInt64) -> RetainedBudgetLease {
+        lock.withLock {
+            precondition(pendingInputBytes >= byteCount)
+            pendingInputBytes -= byteCount
+            let (nextAdmitted, overflow) = admittedInputBytes.addingReportingOverflow(byteCount)
+            precondition(!overflow && nextAdmitted <= limits.inputBytes)
+            admittedInputBytes = nextAdmitted
+        }
+        return RetainedBudgetLease(budget: self, byteCount: byteCount)
+    }
+
+    fileprivate func cancel(byteCount: UInt64) {
+        lock.withLock {
+            precondition(pendingInputBytes >= byteCount)
+            precondition(retainedBytes >= byteCount)
+            pendingInputBytes -= byteCount
+            retainedBytes -= byteCount
+        }
+    }
+
+    fileprivate func releaseRetained(byteCount: UInt64) {
+        lock.withLock {
+            precondition(retainedBytes >= byteCount)
+            retainedBytes -= byteCount
+        }
+    }
+
+    fileprivate func authorizedPurposes(for byteCount: UInt64) -> Set<ContentPurpose> {
+        Set(ContentPurpose.allCases.filter { byteCount <= limit(for: $0) })
+    }
+
+    private func limit(for purpose: ContentPurpose) -> UInt64 {
+        switch purpose {
+        case .secretInspection: limits.secretFileBytes
+        case .nodeLockfileParsing: limits.lockfileBytes
+        case .packageManifestParsing: limits.manifestBytes
+        }
+    }
+}
+
+final class BudgetReservation: @unchecked Sendable {
+    private enum State {
+        case pending
+        case committed(RetainedBudgetLease)
+        case cancelled
+    }
+
+    private let lock = NSLock()
+    private let budget: InputBudget
+    private let byteCount: UInt64
+    private var state = State.pending
+
+    fileprivate init(budget: InputBudget, byteCount: UInt64) {
+        self.budget = budget
+        self.byteCount = byteCount
+    }
+
+    func commit() throws -> RetainedBudgetLease {
+        lock.withLock {
+            switch state {
+            case .pending:
+                let lease = budget.commit(byteCount: byteCount)
+                state = .committed(lease)
+                return lease
+            case let .committed(lease):
+                return lease
+            case .cancelled:
+                return RetainedBudgetLease()
+            }
+        }
+    }
+
+    func cancel() {
+        lock.withLock {
+            guard case .pending = state else { return }
+            budget.cancel(byteCount: byteCount)
+            state = .cancelled
+        }
+    }
+
+    deinit {
+        cancel()
+    }
+}
+
+final class RetainedBudgetLease: @unchecked Sendable {
+    private let budget: InputBudget?
+    private let byteCount: UInt64
+
+    fileprivate init(budget: InputBudget, byteCount: UInt64) {
+        self.budget = budget
+        self.byteCount = byteCount
+    }
+
+    fileprivate init() {
+        budget = nil
+        byteCount = 0
+    }
+
+    deinit {
+        budget?.releaseRetained(byteCount: byteCount)
+    }
+}
+
+final class ContentLease: @unchecked Sendable {
+    private let bytes: Data
+    private let retainedBudgetLease: RetainedBudgetLease
+    private let authorizedPurposes: Set<ContentPurpose>
+
+    var byteCount: UInt64 { UInt64(bytes.count) }
+
+    fileprivate init(
+        bytes: Data,
+        retainedBudgetLease: RetainedBudgetLease,
+        authorizedPurposes: Set<ContentPurpose>
+    ) {
+        self.bytes = bytes
+        self.retainedBudgetLease = retainedBudgetLease
+        self.authorizedPurposes = authorizedPurposes
+    }
+
+    func withBytes<T>(
+        for purpose: ContentPurpose,
+        _ body: (UnsafeRawBufferPointer) throws -> T
+    ) throws -> T {
+        _ = retainedBudgetLease
+        guard authorizedPurposes.contains(purpose) else {
+            throw ContentReadError.purposeTooLarge(purpose.oversizedReason)
+        }
+        return try bytes.withUnsafeBytes(body)
+    }
+}
+
+enum ContentAdmission: Sendable {
+    case admitted(ContentLease)
+    case skipped(reason: CoverageReasonCode, bytes: UInt64)
+}
+
+enum ContentBrokerTestMode: Sendable, Equatable {
+    case pauseAfterFirstChunk
+    case failRead(chunk: UInt64)
+}
+
+actor ContentBrokerTestControl {
+    private let mode: ContentBrokerTestMode
+    private var firstChunkReached = false
+    private var firstChunkWaiters: [CheckedContinuation<Void, Never>] = []
+    private var firstChunkResume: CheckedContinuation<Void, Never>?
+
+    init(_ mode: ContentBrokerTestMode) {
+        if case let .failRead(chunk) = mode {
+            precondition(chunk > 0)
+        }
+        self.mode = mode
+    }
+
+    func waitUntilFirstChunkRead() async {
+        guard !firstChunkReached else { return }
+        await withCheckedContinuation { continuation in
+            firstChunkWaiters.append(continuation)
+        }
+    }
+
+    func resumeAfterFirstChunk() {
+        firstChunkResume?.resume()
+        firstChunkResume = nil
+    }
+
+    fileprivate func pauseAfterFirstChunkIfNeeded() async {
+        guard mode == .pauseAfterFirstChunk else { return }
+        firstChunkReached = true
+        firstChunkWaiters.forEach { $0.resume() }
+        firstChunkWaiters.removeAll(keepingCapacity: false)
+        await withCheckedContinuation { continuation in
+            firstChunkResume = continuation
+        }
+    }
+
+    fileprivate func shouldFail(readChunk chunk: UInt64) -> Bool {
+        mode == .failRead(chunk: chunk)
+    }
+}
+
+actor ContentBroker {
+    private let fileBroker: FileBroker
+    private let budget: InputBudget
+    private let testControl: ContentBrokerTestControl?
+
+    fileprivate init(
+        fileBroker: FileBroker,
+        budget: InputBudget,
+        testControl: ContentBrokerTestControl?
+    ) {
+        self.fileBroker = fileBroker
+        self.budget = budget
+        self.testControl = testControl
+    }
+
+    func read(
+        _ candidate: FileCandidate,
+        for purpose: ContentPurpose
+    ) async -> ContentAdmission {
+        let reservation: BudgetReservation
+        do {
+            reservation = try budget.reserve(
+                admittedFileBytes: candidate.byteCount,
+                for: purpose
+            )
+        } catch let error as ContentReadError {
+            return .skipped(reason: error.coverageReason, bytes: candidate.byteCount)
+        } catch {
+            return .skipped(reason: .unreadable, bytes: candidate.byteCount)
+        }
+
+        var buffer = Data()
+        do {
+            try Task.checkCancellation()
+            let opened = try await fileBroker.openForRead(candidate)
+            defer { opened.close() }
+            try Task.checkCancellation()
+            guard let allocationSize = Int(exactly: candidate.byteCount) else {
+                throw ContentReadError.unreadable
+            }
+            buffer = Data(count: allocationSize)
+            var offset = 0
+            var chunk: UInt64 = 0
+            while offset < allocationSize {
+                try Task.checkCancellation()
+                chunk += 1
+                if await testControl?.shouldFail(readChunk: chunk) == true {
+                    throw ContentReadError.unreadable
+                }
+                let requested = min(64 * 1_024, allocationSize - offset)
+                let readCount = try buffer.withUnsafeMutableBytes { bytes in
+                    guard let baseAddress = bytes.baseAddress else { return 0 }
+                    return try opened.withFileDescriptor { descriptor in
+                        try readRetryingInterrupts(
+                            descriptor,
+                            into: baseAddress.advanced(by: offset),
+                            byteCount: requested
+                        )
+                    }
+                }
+                guard readCount > 0 else {
+                    throw ContentReadError.identityChanged
+                }
+                offset += readCount
+                if chunk == 1, readCount == 64 * 1_024 {
+                    await testControl?.pauseAfterFirstChunkIfNeeded()
+                }
+            }
+
+            try Task.checkCancellation()
+            var extraByte: UInt8 = 0
+            let extraCount = try opened.withFileDescriptor { descriptor in
+                try readRetryingInterrupts(descriptor, into: &extraByte, byteCount: 1)
+            }
+            guard extraCount == 0 else {
+                throw ContentReadError.identityChanged
+            }
+            let finalIdentity = try opened.withFileDescriptor(status)
+            guard finalIdentity == candidate.identity,
+                  FileBrokerPlatform.classify(mode: mode_t(finalIdentity.mode)) == .regular else {
+                throw ContentReadError.identityChanged
+            }
+            try Task.checkCancellation()
+            let retainedLease = try reservation.commit()
+            return .admitted(ContentLease(
+                bytes: buffer,
+                retainedBudgetLease: retainedLease,
+                authorizedPurposes: budget.authorizedPurposes(for: candidate.byteCount)
+            ))
+        } catch let failure as FileAccessFailure {
+            buffer.removeAll(keepingCapacity: false)
+            reservation.cancel()
+            return .skipped(reason: failure.reason, bytes: candidate.byteCount)
+        } catch is CancellationError {
+            buffer.removeAll(keepingCapacity: false)
+            reservation.cancel()
+            return .skipped(reason: .cancelled, bytes: candidate.byteCount)
+        } catch let error as ContentReadError {
+            buffer.removeAll(keepingCapacity: false)
+            reservation.cancel()
+            return .skipped(reason: error.coverageReason, bytes: candidate.byteCount)
+        } catch {
+            buffer.removeAll(keepingCapacity: false)
+            reservation.cancel()
+            return .skipped(reason: .unreadable, bytes: candidate.byteCount)
+        }
+    }
+}
+
+private extension ContentPurpose {
+    var oversizedReason: CoverageReasonCode {
+        switch self {
+        case .secretInspection: .ordinaryFileTooLarge
+        case .nodeLockfileParsing: .lockfileTooLarge
+        case .packageManifestParsing: .manifestTooLarge
+        }
+    }
+
+    static let allCases: [ContentPurpose] = [
+        .secretInspection,
+        .nodeLockfileParsing,
+        .packageManifestParsing,
+    ]
+}
+
+private extension ContentReadError {
+    var coverageReason: CoverageReasonCode {
+        switch self {
+        case let .purposeTooLarge(reason): reason
+        case .globalByteBudget: .globalByteBudget
+        case .unreadable: .unreadable
+        case .identityChanged: .identityChanged
+        case .cancelled: .cancelled
+        }
+    }
 }
 
 actor FileBroker {
     private let rootDescriptor: OwnedFileDescriptor
     nonisolated let rootIdentity: FileIdentity
     nonisolated let limits: ScanLimits
+    nonisolated private let inputBudget: InputBudget
     private let nonce = UUID()
     private let testControl: FileBrokerTestControl?
     private let descriptorAccounting = DescriptorAccounting()
@@ -352,7 +729,18 @@ actor FileBroker {
         self.rootDescriptor = rootDescriptor
         self.rootIdentity = rootIdentity
         self.limits = limits
+        inputBudget = InputBudget(limits: limits)
         self.testControl = testControl
+    }
+
+    nonisolated func makeContentBroker() -> ContentBroker {
+        ContentBroker(fileBroker: self, budget: inputBudget, testControl: nil)
+    }
+
+    nonisolated func makeContentBroker(
+        testControl: ContentBrokerTestControl
+    ) -> ContentBroker {
+        ContentBroker(fileBroker: self, budget: inputBudget, testControl: testControl)
     }
 
     func makeTraversal() throws -> FileTraversal {
@@ -1340,6 +1728,23 @@ fileprivate func readLink(_ name: Data, relativeTo descriptor: Int32) throws -> 
         case let .rejected(reason):
             throw FileAccessFailure(reason: reason)
         }
+    }
+}
+
+fileprivate func readRetryingInterrupts(
+    _ descriptor: Int32,
+    into buffer: UnsafeMutableRawPointer,
+    byteCount: Int
+) throws -> Int {
+    while true {
+        let count = Darwin.read(descriptor, buffer, byteCount)
+        if count >= 0 {
+            return count
+        }
+        if errno == EINTR {
+            continue
+        }
+        throw ContentReadError.unreadable
     }
 }
 
