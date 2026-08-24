@@ -8,6 +8,8 @@ public struct SecretMatchIdentity: Sendable, Equatable, Hashable {
         precondition(digest.count == 32)
         self.digest = digest
     }
+
+    var suppressionFieldBytes: Data { digest }
 }
 
 public struct SecretMatchIdentityKey: Sendable {
