@@ -72,6 +72,7 @@ grep -A3 'func handleScript' Pearcleaner/Logic/Brew/HomebrewUninstaller.swift \
     | grep -q 'throw HomebrewError.commandFailed' \
     || fail "cask script directives are still executed"
 
+"$ROOT/script/project_scanner_boundary_checks.sh"
 "$ROOT/script/test_release_archive_payload.sh"
 
 echo "security regression checks passed"

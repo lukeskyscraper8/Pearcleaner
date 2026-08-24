@@ -16,7 +16,7 @@ concurrency:
 jobs:
   build:
     runs-on: macos-26
-    timeout-minutes: 45
+    timeout-minutes: 75
     env:
       CI_DERIVED_DATA: .build/CI-DerivedData
       CI_SOURCE_PACKAGES: .build/CI-DerivedData/SourcePackages
@@ -31,6 +31,51 @@ jobs:
           -project Pearcleaner.xcodeproj
           -scheme "Pearcleaner Debug"
           -clonedSourcePackagesDirPath "$CI_SOURCE_PACKAGES"
+
+      - name: Test ProjectScannerCore
+        run: >-
+          xcodebuild -quiet
+          -project Pearcleaner.xcodeproj
+          -scheme ProjectScannerCore
+          -configuration Debug
+          -destination 'platform=macOS'
+          -derivedDataPath "$CI_DERIVED_DATA"
+          -clonedSourcePackagesDirPath "$CI_SOURCE_PACKAGES"
+          -disableAutomaticPackageResolution
+          CODE_SIGNING_ALLOWED=NO
+          test
+
+      - name: Test ProjectScannerCore with Thread Sanitizer
+        run: >-
+          xcodebuild -quiet
+          -project Pearcleaner.xcodeproj
+          -scheme ProjectScannerCore
+          -configuration Debug
+          -destination 'platform=macOS'
+          -derivedDataPath .build/ScannerTSANDerivedData
+          -clonedSourcePackagesDirPath "$CI_SOURCE_PACKAGES"
+          -disableAutomaticPackageResolution
+          -enableThreadSanitizer YES
+          CODE_SIGNING_ALLOWED=NO
+          test
+
+      - name: Test scanner persistence process boundaries
+        env:
+          PROJECT_SCANNER_SOURCE_PACKAGES: ${{ env.CI_SOURCE_PACKAGES }}
+        run: ./script/test_project_scanner_persistence_boundaries.sh
+
+      - name: Test scanner mount boundary
+        env:
+          PROJECT_SCANNER_SOURCE_PACKAGES: ${{ env.CI_SOURCE_PACKAGES }}
+        run: ./script/test_project_scanner_mount_boundary.sh
+
+      - name: Verify scanner API and dependency boundaries
+        run: >-
+          ./script/project_scanner_boundary_checks.sh
+          "$CI_DERIVED_DATA/Build/Products/Debug"
+
+      - name: Test scanner boundary checks
+        run: ./script/test_project_scanner_boundary_checks.sh
 
       - name: Build Debug
         run: >-
