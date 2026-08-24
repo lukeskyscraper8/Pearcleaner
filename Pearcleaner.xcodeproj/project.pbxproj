@@ -8,6 +8,10 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		A30000000000000000000016 /* libGitEvidenceShared.a in Frameworks */ = {isa = PBXBuildFile; fileRef = A30000000000000000000001 /* libGitEvidenceShared.a */; };
+		A30000000000000000000023 /* libGitEvidenceShared.a in Frameworks */ = {isa = PBXBuildFile; fileRef = A30000000000000000000001 /* libGitEvidenceShared.a */; };
+		A30000000000000000000024 /* GitEvidenceService.xpc in CopyFiles */ = {isa = PBXBuildFile; fileRef = A30000000000000000000012 /* GitEvidenceService.xpc */; settings = {ATTRIBUTES = (CodeSignOnCopy, RemoveHeadersOnCopy, ); }; };
+		A30000000000000000000025 /* GitRunner in CopyFiles */ = {isa = PBXBuildFile; fileRef = A30000000000000000000009 /* GitRunner */; settings = {ATTRIBUTES = (CodeSignOnCopy, ); }; };
 		A20000000000000000000009 /* libProjectScannerCore.a in Frameworks */ = {isa = PBXBuildFile; fileRef = A20000000000000000000001 /* libProjectScannerCore.a */; };
 		A2000000000000000000000A /* libProjectScannerCore.a in Frameworks */ = {isa = PBXBuildFile; fileRef = A20000000000000000000001 /* libProjectScannerCore.a */; };
 		A20000000000000000000047 /* libProjectScannerCore.a in Frameworks */ = {isa = PBXBuildFile; fileRef = A20000000000000000000001 /* libProjectScannerCore.a */; };
@@ -88,6 +92,34 @@
 			remoteGlobalIDString = C77B8FFF2AF18E2E009CC655;
 			remoteInfo = Pearcleaner;
 		};
+		A3000000000000000000001B /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = C77B8FF82AF18E2E009CC655 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = A30000000000000000000008;
+			remoteInfo = GitEvidenceShared;
+		};
+		A3000000000000000000002A /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = C77B8FF82AF18E2E009CC655 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = A30000000000000000000008;
+			remoteInfo = GitEvidenceShared;
+		};
+		A3000000000000000000002B /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = C77B8FF82AF18E2E009CC655 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = A3000000000000000000001A;
+			remoteInfo = GitEvidenceService;
+		};
+		A3000000000000000000002C /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = C77B8FF82AF18E2E009CC655 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = A30000000000000000000011;
+			remoteInfo = GitRunner;
+		};
 		C78121692BC892A000BE06BD /* PBXContainerItemProxy */ = {
 			isa = PBXContainerItemProxy;
 			containerPortal = C77B8FF82AF18E2E009CC655 /* Project object */;
@@ -157,9 +189,44 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		A30000000000000000000022 /* CopyFiles */ = {
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 2147483647;
+			dstPath = "";
+			dstSubfolderSpec = 16;
+			files = (
+				A30000000000000000000024 /* GitEvidenceService.xpc in CopyFiles */,
+			);
+			name = "Embed XPC Services";
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		A30000000000000000000030 /* CopyFiles */ = {
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 2147483647;
+			dstPath = "";
+			dstSubfolderSpec = 6;
+			files = (
+				A30000000000000000000025 /* GitRunner in CopyFiles */,
+			);
+			name = "Embed GitRunner";
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		A3000000000000000000000D /* CopyFiles */ = {
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 2147483647;
+			dstPath = /usr/share/man/man1/;
+			dstSubfolderSpec = 0;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 1;
+		};
 /* End PBXCopyFilesBuildPhase section */
 
 /* Begin PBXFileReference section */
+		A30000000000000000000001 /* libGitEvidenceShared.a */ = {isa = PBXFileReference; explicitFileType = archive.ar; includeInIndex = 0; path = libGitEvidenceShared.a; sourceTree = BUILT_PRODUCTS_DIR; };
+		A30000000000000000000009 /* GitRunner */ = {isa = PBXFileReference; explicitFileType = "compiled.mach-o.executable"; includeInIndex = 0; path = GitRunner; sourceTree = BUILT_PRODUCTS_DIR; };
+		A30000000000000000000012 /* GitEvidenceService.xpc */ = {isa = PBXFileReference; explicitFileType = "wrapper.xpc-service"; includeInIndex = 0; path = GitEvidenceService.xpc; sourceTree = BUILT_PRODUCTS_DIR; };
+		A3000000000000000000001D /* GitFeasibilityHarness.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = GitFeasibilityHarness.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		A20000000000000000000001 /* libProjectScannerCore.a */ = {isa = PBXFileReference; explicitFileType = archive.ar; includeInIndex = 0; path = libProjectScannerCore.a; sourceTree = BUILT_PRODUCTS_DIR; };
 		A20000000000000000000002 /* ProjectScannerCoreTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = ProjectScannerCoreTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		A20000000000000000000042 /* KeychainProjectKeyStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProjectScanner/KeychainProjectKeyStore.swift; sourceTree = "<group>"; };
@@ -278,6 +345,10 @@
 /* End PBXFileSystemSynchronizedGroupBuildPhaseMembershipExceptionSet section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
+		A30000000000000000000002 /* GitEvidenceShared */ = {isa = PBXFileSystemSynchronizedRootGroup; explicitFileTypes = {}; explicitFolders = (); path = GitEvidenceShared; sourceTree = "<group>"; };
+		A3000000000000000000000A /* GitRunner */ = {isa = PBXFileSystemSynchronizedRootGroup; explicitFileTypes = {}; explicitFolders = (); path = GitRunner; sourceTree = "<group>"; };
+		A30000000000000000000013 /* GitEvidenceService */ = {isa = PBXFileSystemSynchronizedRootGroup; explicitFileTypes = {}; explicitFolders = (); path = GitEvidenceService; sourceTree = "<group>"; };
+		A3000000000000000000001E /* GitFeasibilityHarness */ = {isa = PBXFileSystemSynchronizedRootGroup; explicitFileTypes = {}; explicitFolders = (); path = GitFeasibilityHarness; sourceTree = "<group>"; };
 		A20000000000000000000003 /* ProjectScannerCore */ = {isa = PBXFileSystemSynchronizedRootGroup; explicitFileTypes = {}; explicitFolders = (); path = ProjectScannerCore; sourceTree = "<group>"; };
 		A20000000000000000000004 /* ProjectScannerCoreTests */ = {isa = PBXFileSystemSynchronizedRootGroup; explicitFileTypes = {}; explicitFolders = (); path = ProjectScannerCoreTests; sourceTree = "<group>"; };
 		A12400000000000000000002 /* PearcleanerTests */ = {isa = PBXFileSystemSynchronizedRootGroup; explicitFileTypes = {}; explicitFolders = (); path = PearcleanerTests; sourceTree = "<group>"; };
@@ -300,6 +371,36 @@
 /* End PBXFileSystemSynchronizedRootGroup section */
 
 /* Begin PBXFrameworksBuildPhase section */
+		A30000000000000000000003 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		A3000000000000000000000C /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		A30000000000000000000015 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				A30000000000000000000016 /* libGitEvidenceShared.a in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		A30000000000000000000020 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				A30000000000000000000023 /* libGitEvidenceShared.a in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 		A20000000000000000000005 /* Frameworks */ = {
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
@@ -435,6 +536,10 @@
 				A12400000000000000000002 /* PearcleanerTests */,
 				A20000000000000000000003 /* ProjectScannerCore */,
 				A20000000000000000000004 /* ProjectScannerCoreTests */,
+				A30000000000000000000002 /* GitEvidenceShared */,
+				A3000000000000000000000A /* GitRunner */,
+				A30000000000000000000013 /* GitEvidenceService */,
+				A3000000000000000000001E /* GitFeasibilityHarness */,
 				C72893102AFD51EA00C8C1CD /* PearcleanerSentinel */,
 				C78121642BC892A000BE06BD /* FinderOpen */,
 				C73545F12D849A1B00A3DC0C /* PearcleanerHelper */,
@@ -450,6 +555,10 @@
 				A12400000000000000000001 /* PearcleanerTests.xctest */,
 				A20000000000000000000001 /* libProjectScannerCore.a */,
 				A20000000000000000000002 /* ProjectScannerCoreTests.xctest */,
+				A30000000000000000000001 /* libGitEvidenceShared.a */,
+				A30000000000000000000009 /* GitRunner */,
+				A30000000000000000000012 /* GitEvidenceService.xpc */,
+				A3000000000000000000001D /* GitFeasibilityHarness.app */,
 				C728930F2AFD51EA00C8C1CD /* PearcleanerSentinel */,
 				C78121632BC892A000BE06BD /* FinderOpen.appex */,
 				C73545F02D849A1B00A3DC0C /* PearcleanerHelper */,
@@ -679,6 +788,98 @@
 			productReference = C78121632BC892A000BE06BD /* FinderOpen.appex */;
 			productType = "com.apple.product-type.app-extension";
 		};
+		A30000000000000000000008 /* GitEvidenceShared */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = A30000000000000000000007 /* Build configuration list for PBXNativeTarget "GitEvidenceShared" */;
+			buildPhases = (
+				A30000000000000000000004 /* Sources */,
+				A30000000000000000000003 /* Frameworks */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			fileSystemSynchronizedGroups = (
+				A30000000000000000000002 /* GitEvidenceShared */,
+			);
+			name = GitEvidenceShared;
+			packageProductDependencies = (
+			);
+			productName = GitEvidenceShared;
+			productReference = A30000000000000000000001 /* libGitEvidenceShared.a */;
+			productType = "com.apple.product-type.library.static";
+		};
+		A30000000000000000000011 /* GitRunner */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = A30000000000000000000010 /* Build configuration list for PBXNativeTarget "GitRunner" */;
+			buildPhases = (
+				A3000000000000000000000B /* Sources */,
+				A3000000000000000000000C /* Frameworks */,
+				A3000000000000000000000D /* CopyFiles */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			fileSystemSynchronizedGroups = (
+				A3000000000000000000000A /* GitRunner */,
+			);
+			name = GitRunner;
+			packageProductDependencies = (
+			);
+			productName = GitRunner;
+			productReference = A30000000000000000000009 /* GitRunner */;
+			productType = "com.apple.product-type.tool";
+		};
+		A3000000000000000000001A /* GitEvidenceService */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = A30000000000000000000019 /* Build configuration list for PBXNativeTarget "GitEvidenceService" */;
+			buildPhases = (
+				A30000000000000000000014 /* Sources */,
+				A30000000000000000000015 /* Frameworks */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				A3000000000000000000001C /* PBXTargetDependency */,
+			);
+			fileSystemSynchronizedGroups = (
+				A30000000000000000000013 /* GitEvidenceService */,
+			);
+			name = GitEvidenceService;
+			packageProductDependencies = (
+			);
+			productName = GitEvidenceService;
+			productReference = A30000000000000000000012 /* GitEvidenceService.xpc */;
+			productType = "com.apple.product-type.xpc-service";
+		};
+		A30000000000000000000029 /* GitFeasibilityHarness */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = A30000000000000000000028 /* Build configuration list for PBXNativeTarget "GitFeasibilityHarness" */;
+			buildPhases = (
+				A3000000000000000000001F /* Sources */,
+				A30000000000000000000020 /* Frameworks */,
+				A30000000000000000000021 /* Resources */,
+				A30000000000000000000022 /* CopyFiles */,
+				A30000000000000000000030 /* CopyFiles */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				A3000000000000000000002D /* PBXTargetDependency */,
+				A3000000000000000000002E /* PBXTargetDependency */,
+				A3000000000000000000002F /* PBXTargetDependency */,
+			);
+			fileSystemSynchronizedGroups = (
+				A3000000000000000000001E /* GitFeasibilityHarness */,
+			);
+			name = GitFeasibilityHarness;
+			packageProductDependencies = (
+			);
+			productName = GitFeasibilityHarness;
+			productReference = A3000000000000000000001D /* GitFeasibilityHarness.app */;
+			productType = "com.apple.product-type.application";
+		};
 /* End PBXNativeTarget section */
 
 /* Begin PBXProject section */
@@ -703,6 +904,18 @@
 						CreatedOnToolsVersion = 26.0;
 					};
 					A20000000000000000000016 = {
+						CreatedOnToolsVersion = 26.0;
+					};
+					A30000000000000000000008 = {
+						CreatedOnToolsVersion = 26.0;
+					};
+					A30000000000000000000011 = {
+						CreatedOnToolsVersion = 26.0;
+					};
+					A3000000000000000000001A = {
+						CreatedOnToolsVersion = 26.0;
+					};
+					A30000000000000000000029 = {
 						CreatedOnToolsVersion = 26.0;
 					};
 					C78121622BC892A000BE06BD = {
@@ -755,6 +968,10 @@
 				A12400000000000000000003 /* PearcleanerTests */,
 				A20000000000000000000015 /* ProjectScannerCore */,
 				A20000000000000000000016 /* ProjectScannerCoreTests */,
+				A30000000000000000000008 /* GitEvidenceShared */,
+				A30000000000000000000011 /* GitRunner */,
+				A3000000000000000000001A /* GitEvidenceService */,
+				A30000000000000000000029 /* GitFeasibilityHarness */,
 				C728930E2AFD51EA00C8C1CD /* PearcleanerSentinel */,
 				C78121622BC892A000BE06BD /* FinderOpen */,
 				C73545EF2D849A1B00A3DC0C /* PearcleanerHelper */,
@@ -763,6 +980,13 @@
 /* End PBXProject section */
 
 /* Begin PBXResourcesBuildPhase section */
+		A30000000000000000000021 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 		A12400000000000000000006 /* Resources */ = {
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
@@ -792,6 +1016,34 @@
 /* End PBXResourcesBuildPhase section */
 
 /* Begin PBXSourcesBuildPhase section */
+		A30000000000000000000004 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		A3000000000000000000000B /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		A30000000000000000000014 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		A3000000000000000000001F /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 		A20000000000000000000007 /* Sources */ = {
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
@@ -901,6 +1153,26 @@
 			isa = PBXTargetDependency;
 			target = C78121622BC892A000BE06BD /* FinderOpen */;
 			targetProxy = C78121692BC892A000BE06BD /* PBXContainerItemProxy */;
+		};
+		A3000000000000000000001C /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = A30000000000000000000008 /* GitEvidenceShared */;
+			targetProxy = A3000000000000000000001B /* PBXContainerItemProxy */;
+		};
+		A3000000000000000000002D /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = A30000000000000000000008 /* GitEvidenceShared */;
+			targetProxy = A3000000000000000000002A /* PBXContainerItemProxy */;
+		};
+		A3000000000000000000002E /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = A3000000000000000000001A /* GitEvidenceService */;
+			targetProxy = A3000000000000000000002B /* PBXContainerItemProxy */;
+		};
+		A3000000000000000000002F /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = A30000000000000000000011 /* GitRunner */;
+			targetProxy = A3000000000000000000002C /* PBXContainerItemProxy */;
 		};
 /* End PBXTargetDependency section */
 
@@ -1435,6 +1707,200 @@
 			};
 			name = Release;
 		};
+		A30000000000000000000005 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				DEFINES_MODULE = YES;
+				MACH_O_TYPE = staticlib;
+				MACOSX_DEPLOYMENT_TARGET = 13.0;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = macosx;
+				SKIP_INSTALL = YES;
+				SUPPORTED_PLATFORMS = macosx;
+				SWIFT_STRICT_CONCURRENCY = complete;
+				SWIFT_VERSION = 5.0;
+			};
+			name = Debug;
+		};
+		A30000000000000000000006 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				DEFINES_MODULE = YES;
+				MACH_O_TYPE = staticlib;
+				MACOSX_DEPLOYMENT_TARGET = 13.0;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = macosx;
+				SKIP_INSTALL = YES;
+				SUPPORTED_PLATFORMS = macosx;
+				SWIFT_STRICT_CONCURRENCY = complete;
+				SWIFT_VERSION = 5.0;
+			};
+			name = Release;
+		};
+		A3000000000000000000000E /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CLANG_ENABLE_MODULES = YES;
+				CODE_SIGN_ENTITLEMENTS = GitRunner/GitRunner.entitlements;
+				"CODE_SIGN_IDENTITY[sdk=macosx*]" = "Apple Development";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = "$(APP_BUILD)";
+				DEAD_CODE_STRIPPING = YES;
+				DEVELOPMENT_TEAM = 68583N3MNF;
+				ENABLE_HARDENED_RUNTIME = YES;
+				INSTALL_PATH = "";
+				MACOSX_DEPLOYMENT_TARGET = 13.0;
+				MARKETING_VERSION = "$(APP_VERSION)";
+				PRODUCT_BUNDLE_IDENTIFIER = com.lukerow.Pearcleaner.GitRunner;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				PROVISIONING_PROFILE_SPECIFIER = "";
+				SWIFT_STRICT_CONCURRENCY = complete;
+				SWIFT_VERSION = 5.0;
+			};
+			name = Debug;
+		};
+		A3000000000000000000000F /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CLANG_ENABLE_MODULES = YES;
+				CODE_SIGN_ENTITLEMENTS = GitRunner/GitRunner.entitlements;
+				"CODE_SIGN_IDENTITY[sdk=macosx*]" = "Developer ID Application";
+				CODE_SIGN_INJECT_BASE_ENTITLEMENTS = NO;
+				CODE_SIGN_STYLE = Manual;
+				CURRENT_PROJECT_VERSION = "$(APP_BUILD)";
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				DEAD_CODE_STRIPPING = YES;
+				DEVELOPMENT_TEAM = 68583N3MNF;
+				ENABLE_HARDENED_RUNTIME = YES;
+				INSTALL_PATH = "";
+				MACOSX_DEPLOYMENT_TARGET = 13.0;
+				MARKETING_VERSION = "$(APP_VERSION)";
+				PRODUCT_BUNDLE_IDENTIFIER = com.lukerow.Pearcleaner.GitRunner;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				PROVISIONING_PROFILE_SPECIFIER = "";
+				SWIFT_STRICT_CONCURRENCY = complete;
+				SWIFT_VERSION = 5.0;
+			};
+			name = Release;
+		};
+		A30000000000000000000017 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_ENTITLEMENTS = GitEvidenceService/GitEvidenceService.entitlements;
+				"CODE_SIGN_IDENTITY[sdk=macosx*]" = "Apple Development";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = "$(APP_BUILD)";
+				DEAD_CODE_STRIPPING = YES;
+				DEVELOPMENT_TEAM = 68583N3MNF;
+				ENABLE_HARDENED_RUNTIME = YES;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = GitEvidenceService/Info.plist;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+					"@executable_path/../../../../Frameworks",
+				);
+				MACOSX_DEPLOYMENT_TARGET = 13.0;
+				MARKETING_VERSION = "$(APP_VERSION)";
+				PRODUCT_BUNDLE_IDENTIFIER = com.lukerow.Pearcleaner.GitEvidenceService;
+				PRODUCT_NAME = GitEvidenceService;
+				PROVISIONING_PROFILE_SPECIFIER = "";
+				SKIP_INSTALL = YES;
+				SWIFT_STRICT_CONCURRENCY = complete;
+				SWIFT_VERSION = 5.0;
+				WRAPPER_EXTENSION = xpc;
+			};
+			name = Debug;
+		};
+		A30000000000000000000018 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_ENTITLEMENTS = GitEvidenceService/GitEvidenceService.entitlements;
+				"CODE_SIGN_IDENTITY[sdk=macosx*]" = "Developer ID Application";
+				CODE_SIGN_INJECT_BASE_ENTITLEMENTS = NO;
+				CODE_SIGN_STYLE = Manual;
+				CURRENT_PROJECT_VERSION = "$(APP_BUILD)";
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				DEAD_CODE_STRIPPING = YES;
+				DEVELOPMENT_TEAM = 68583N3MNF;
+				ENABLE_HARDENED_RUNTIME = YES;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = GitEvidenceService/Info.plist;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+					"@executable_path/../../../../Frameworks",
+				);
+				MACOSX_DEPLOYMENT_TARGET = 13.0;
+				MARKETING_VERSION = "$(APP_VERSION)";
+				PRODUCT_BUNDLE_IDENTIFIER = com.lukerow.Pearcleaner.GitEvidenceService;
+				PRODUCT_NAME = GitEvidenceService;
+				PROVISIONING_PROFILE_SPECIFIER = "";
+				SKIP_INSTALL = YES;
+				SWIFT_STRICT_CONCURRENCY = complete;
+				SWIFT_VERSION = 5.0;
+				WRAPPER_EXTENSION = xpc;
+			};
+			name = Release;
+		};
+		A30000000000000000000026 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_ENTITLEMENTS = GitFeasibilityHarness/GitFeasibilityHarness.entitlements;
+				"CODE_SIGN_IDENTITY[sdk=macosx*]" = "Apple Development";
+				CODE_SIGN_STYLE = Automatic;
+				COMBINE_HIDPI_IMAGES = YES;
+				CURRENT_PROJECT_VERSION = "$(APP_BUILD)";
+				DEAD_CODE_STRIPPING = YES;
+				DEVELOPMENT_TEAM = 68583N3MNF;
+				ENABLE_HARDENED_RUNTIME = YES;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = GitFeasibilityHarness/Info.plist;
+				INFOPLIST_KEY_LSBackgroundOnly = YES;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+				);
+				MACOSX_DEPLOYMENT_TARGET = 13.0;
+				MARKETING_VERSION = "$(APP_VERSION)";
+				PRODUCT_BUNDLE_IDENTIFIER = com.lukerow.Pearcleaner.GitFeasibilityHarness;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				PROVISIONING_PROFILE_SPECIFIER = "";
+				SWIFT_STRICT_CONCURRENCY = complete;
+				SWIFT_VERSION = 5.0;
+			};
+			name = Debug;
+		};
+		A30000000000000000000027 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_ENTITLEMENTS = GitFeasibilityHarness/GitFeasibilityHarness.entitlements;
+				"CODE_SIGN_IDENTITY[sdk=macosx*]" = "Developer ID Application";
+				CODE_SIGN_INJECT_BASE_ENTITLEMENTS = NO;
+				CODE_SIGN_STYLE = Manual;
+				COMBINE_HIDPI_IMAGES = YES;
+				CURRENT_PROJECT_VERSION = "$(APP_BUILD)";
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				DEAD_CODE_STRIPPING = YES;
+				DEVELOPMENT_TEAM = 68583N3MNF;
+				ENABLE_HARDENED_RUNTIME = YES;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = GitFeasibilityHarness/Info.plist;
+				INFOPLIST_KEY_LSBackgroundOnly = YES;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+				);
+				MACOSX_DEPLOYMENT_TARGET = 13.0;
+				MARKETING_VERSION = "$(APP_VERSION)";
+				PRODUCT_BUNDLE_IDENTIFIER = com.lukerow.Pearcleaner.GitFeasibilityHarness;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				PROVISIONING_PROFILE_SPECIFIER = "";
+				SWIFT_STRICT_CONCURRENCY = complete;
+				SWIFT_VERSION = 5.0;
+			};
+			name = Release;
+		};
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
@@ -1506,6 +1972,42 @@
 			buildConfigurations = (
 				C781216D2BC892A000BE06BD /* Debug */,
 				C781216E2BC892A000BE06BD /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		A30000000000000000000007 /* Build configuration list for PBXNativeTarget "GitEvidenceShared" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				A30000000000000000000005 /* Debug */,
+				A30000000000000000000006 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		A30000000000000000000010 /* Build configuration list for PBXNativeTarget "GitRunner" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				A3000000000000000000000E /* Debug */,
+				A3000000000000000000000F /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		A30000000000000000000019 /* Build configuration list for PBXNativeTarget "GitEvidenceService" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				A30000000000000000000017 /* Debug */,
+				A30000000000000000000018 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		A30000000000000000000028 /* Build configuration list for PBXNativeTarget "GitFeasibilityHarness" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				A30000000000000000000026 /* Debug */,
+				A30000000000000000000027 /* Release */,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;
