@@ -1,0 +1,1 @@
+README: configure your API key in the dashboard settings panel. // negative-955

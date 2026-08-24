@@ -1,0 +1,1 @@
+slack docs mention xoxb- format without valid segments // negative-15

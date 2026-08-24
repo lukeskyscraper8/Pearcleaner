@@ -13,7 +13,7 @@ enum FingerprintError: Error, Equatable {
 
 public struct ProjectKeyMaterial: Sendable {
     public let generation: UUID
-    fileprivate let key: SymmetricKey
+    internal let key: SymmetricKey
 
     init(generation: UUID, keyBytes: Data) throws {
         guard keyBytes.count == 32 else {

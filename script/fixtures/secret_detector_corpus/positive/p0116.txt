@@ -1,0 +1,1 @@
+const credential = "sk_live_T0D3tMdwm1YSGLDhdRY1vbLn";

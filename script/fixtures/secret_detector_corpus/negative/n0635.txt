@@ -1,0 +1,1 @@
+stripe dashboard shows sk_live prefix in documentation screenshots only // negative-635

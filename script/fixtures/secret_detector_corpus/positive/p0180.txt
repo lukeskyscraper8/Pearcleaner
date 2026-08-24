@@ -1,0 +1,1 @@
+const credential = "AKIAPDWXEYV340MB0075";

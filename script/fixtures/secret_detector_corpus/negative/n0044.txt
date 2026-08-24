@@ -1,0 +1,1 @@
+function authenticate(user) { return user.isAdmin; } // negative-44
