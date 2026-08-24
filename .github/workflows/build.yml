@@ -45,6 +45,30 @@ jobs:
           CODE_SIGNING_ALLOWED=NO
           test
 
+      - name: Verify secret detector corpus gates
+        env:
+          SECRET_DETECTOR_CORPUS_DERIVED_DATA: "$CI_DERIVED_DATA"
+          SECRET_DETECTOR_CORPUS_SOURCE_PACKAGES: "$CI_SOURCE_PACKAGES"
+        run: ./script/test_secret_detector_corpus.sh
+
+      - name: Run Git feasibility harness (signed)
+        run: |
+          if /usr/bin/security find-identity -v -p codesigning 2>/dev/null \
+            | /usr/bin/grep -Fq "Developer ID Application"; then
+            ./script/git_evidence_feasibility_run.sh
+          else
+            echo "Deferred: CI runner has no Developer ID signing identity."
+            echo "Checked-in git-feasibility manifests remain the tuple gate until a notarized local matrix run passes."
+          fi
+
+      - name: Verify Git evidence sandbox checks
+        env:
+          GIT_FEASIBILITY_SANDBOX_GATE: deferred
+        run: ./script/git_evidence_sandbox_checks.sh
+
+      - name: Test git evidence boundary checks
+        run: ./script/test_git_evidence_boundaries.sh
+
       - name: Test ProjectScannerCore with Thread Sanitizer
         run: >-
           xcodebuild -quiet

@@ -86,3 +86,7 @@ The Release feasibility matrix requires a **Developer ID–signed and notarized*
 The harness orchestrator itself is intentionally **not** App Sandbox–restricted so it can archive evidence and drive embedded XPC services. `GitEvidenceService` and `GitRunner` retain restrictive sandbox entitlements under test.
 
 Document deferred architectures in the feasibility script output when Rosetta or notarization is unavailable.
+
+## CI verification gates (slice 2 Task 12)
+
+GitHub Actions runs `script/test_secret_detector_corpus.sh`, `script/test_git_evidence_boundaries.sh`, and `script/git_evidence_sandbox_checks.sh` with `GIT_FEASIBILITY_SANDBOX_GATE=deferred` until notarized harness evidence produces `overallStatus: passed` manifests. The signed harness matrix step runs only when the runner has a **Developer ID Application** signing identity; otherwise CI documents the deferral and relies on checked-in archived evidence for registry layout validation.

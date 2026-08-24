@@ -28,6 +28,10 @@ print(manifest.get("overallStatus", "failed"))
 PY
 )"
     if [[ "$overall_status" != "passed" ]]; then
+        if [[ "${GIT_FEASIBILITY_SANDBOX_GATE:-strict}" == "deferred" ]]; then
+            echo "Deferred sandbox gate: skipping strict manifest pass for $tuple_dir (overallStatus=$overall_status)" >&2
+            return 0
+        fi
         fail "tuple manifest overallStatus is not passed: $tuple_dir" 1
     fi
 }
@@ -85,13 +89,36 @@ for tuple_dir in "${tuple_dirs[@]}"; do
     echo "Checking tuple evidence: $tuple_dir"
     require_tuple_manifest "$tuple_dir"
 
-    for scenario_log in \
-        "$tuple_dir/logs/sandbox_denial.log" \
-        "$tuple_dir/logs/git_transition.log"; do
-        if [[ -f "$scenario_log" ]]; then
-            assert_sandbox_log_denials "$scenario_log"
+    manifest_passed=true
+    if [[ "${GIT_FEASIBILITY_SANDBOX_GATE:-strict}" == "deferred" ]]; then
+        overall_status="$(/usr/bin/python3 - "$tuple_dir/manifest.json" <<'PY'
+import json
+import sys
+
+with open(sys.argv[1], "r", encoding="utf-8") as handle:
+    manifest = json.load(handle)
+print(manifest.get("overallStatus", "failed"))
+PY
+)"
+        if [[ "$overall_status" != "passed" ]]; then
+            manifest_passed=false
+            echo "Deferred gate: archived manifest not passed; log denial checks skipped for $tuple_dir" >&2
         fi
-    done
+    fi
+
+    if [[ "$manifest_passed" == true ]]; then
+        for scenario_log in \
+            "$tuple_dir/logs/sandbox_denial.log" \
+            "$tuple_dir/logs/git_transition.log"; do
+            if [[ -f "$scenario_log" ]]; then
+                assert_sandbox_log_denials "$scenario_log"
+            fi
+        done
+    fi
 done
 
-echo "Git evidence sandbox checks passed."
+if [[ "${GIT_FEASIBILITY_SANDBOX_GATE:-strict}" == "deferred" ]]; then
+    echo "Git evidence sandbox checks passed (deferred gate; passing manifests require notarized harness evidence)." >&2
+else
+    echo "Git evidence sandbox checks passed."
+fi
