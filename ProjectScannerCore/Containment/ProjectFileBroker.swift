@@ -807,6 +807,26 @@ actor FileBroker {
         }
     }
 
+    fileprivate func makeGitPreflightSession() throws -> GitPreflightSession {
+        GitPreflightSession(
+            rootDescriptor: try rootDescriptor.duplicate(accounting: descriptorAccounting),
+            rootIdentity: rootIdentity,
+            limits: limits
+        )
+    }
+
+    func gitPreflight() async -> GitPreflightOutcome {
+        do {
+            let session = try makeGitPreflightSession()
+            defer { session.close() }
+            return try session.run()
+        } catch let failure as GitPreflightFailure {
+            return .rejected(failure.reason)
+        } catch {
+            return .rejected(.unreadable)
+        }
+    }
+
     fileprivate func openForRead(_ candidate: FileCandidate) async throws -> OpenedReadFile {
         guard candidate.accessToken.brokerNonce == nonce else {
             throw FileAccessFailure(reason: .identityChanged)
@@ -1836,6 +1856,844 @@ fileprivate extension Data {
         return try terminated.withUnsafeBufferPointer { buffer in
             try body(buffer.baseAddress!)
         }
+    }
+}
+
+
+fileprivate func gitPreflightInspect(_ name: Data, relativeTo descriptor: Int32) throws -> FileIdentity {
+    do {
+        return try inspect(name, relativeTo: descriptor)
+    } catch {
+        throw GitPreflightFailure(.unreadable)
+    }
+}
+
+fileprivate final class GitPreflightSession: @unchecked Sendable {
+    private let rootDescriptor: OwnedFileDescriptor
+    private let rootIdentity: FileIdentity
+    private let limits: ScanLimits
+
+    init(rootDescriptor: OwnedFileDescriptor, rootIdentity: FileIdentity, limits: ScanLimits) {
+        self.rootDescriptor = rootDescriptor
+        self.rootIdentity = rootIdentity
+        self.limits = limits
+    }
+
+    deinit {
+        close()
+    }
+
+    func close() {
+        rootDescriptor.closeIfNeeded()
+    }
+
+    private func withRootDescriptor<T>(_ body: (Int32) throws -> T) throws -> T {
+        try rootDescriptor.withFileDescriptor(body)
+    }
+
+    func run() throws -> GitPreflightOutcome {
+        let gitPointer = try resolveGitPreflightPointer()
+        let layout = try resolveLayout(pointer: gitPointer)
+        let config = try readAndValidateConfiguration(
+            gitDirComponents: layout.gitDirComponents,
+            commonDirComponents: layout.commonDirComponents
+        )
+        let headObjectID = try resolveHead(
+            gitDirComponents: layout.gitDirComponents,
+            commonDirComponents: layout.commonDirComponents,
+            algorithm: config.objectHashAlgorithm
+        )
+        let manifest = try buildManifest(
+            layout: layout,
+            algorithm: config.objectHashAlgorithm
+        )
+        guard let gitDir = try verifiedPath(from: layout.gitDirComponents),
+              let commonDir = try verifiedPath(from: layout.commonDirComponents) else {
+            return .rejected(.unreadable)
+        }
+        let worktreeRoot = try verifiedPath(from: layout.worktreeRootComponents)
+        return .accepted(GitRepositoryContext(
+            worktreeRoot: worktreeRoot,
+            gitDir: gitDir,
+            commonDir: commonDir,
+            headObjectID: headObjectID,
+            repositoryFormatVersion: config.repositoryFormatVersion,
+            objectHashAlgorithm: config.objectHashAlgorithm,
+            manifest: manifest
+        ))
+    }
+
+    private func resolveGitPreflightPointer() throws -> GitPreflightPointer {
+        let dotGit = Data(".git".utf8)
+        return try withRootDescriptor { rootFD in
+            guard entryExists(named: dotGit, relativeTo: rootFD) else {
+                throw GitPreflightFailure(.noRepository)
+            }
+            let inspected = try inspect(dotGit, relativeTo: rootFD)
+            switch FileBrokerPlatform.classify(mode: mode_t(inspected.mode)) {
+            case .directory:
+                return GitPreflightPointer(
+                    worktreeRootComponents: [],
+                    gitDirComponents: [dotGit]
+                )
+            case .regular:
+                let contents = try readRegularFile(
+                    named: dotGit,
+                    relativeTo: rootFD,
+                    maxBytes: GitPreflightLimits.maxPointerFileBytes
+                )
+                guard let gitDirComponents = try parseGitDirPointer(contents, anchor: []) else {
+                    throw GitPreflightFailure(.externalGitDir)
+                }
+                return GitPreflightPointer(
+                    worktreeRootComponents: [],
+                    gitDirComponents: gitDirComponents
+                )
+            default:
+                throw GitPreflightFailure(.noRepository)
+            }
+        }
+    }
+
+    private func resolveLayout(pointer: GitPreflightPointer) throws -> GitPreflightLayout {
+        let gitDirComponents = pointer.gitDirComponents
+        var commonDirComponents = pointer.gitDirComponents
+
+        if entryExists(at: gitDirComponents + [Data("commondir".utf8)]) {
+            guard let commondirRelative = try readOptionalPointerFile(
+                name: Data("commondir".utf8),
+                parentComponents: gitDirComponents
+            ) else {
+                throw GitPreflightFailure(.externalCommonDir)
+            }
+            guard let resolved = try resolveInRootRelativePath(
+                commondirRelative,
+                anchor: gitDirComponents
+            ) else {
+                throw GitPreflightFailure(.externalCommonDir)
+            }
+            commonDirComponents = resolved
+        }
+
+        try rejectIfPresent(
+            name: Data("alternates".utf8),
+            parentComponents: commonDirComponents + [Data("objects".utf8), Data("info".utf8)],
+            reason: .objectAlternates
+        )
+        try rejectIfPresent(
+            name: Data("replace".utf8),
+            parentComponents: commonDirComponents + [Data("refs".utf8)],
+            reason: .replacementReferences
+        )
+
+        return GitPreflightLayout(
+            worktreeRootComponents: pointer.worktreeRootComponents,
+            gitDirComponents: gitDirComponents,
+            commonDirComponents: commonDirComponents
+        )
+    }
+
+    private func readAndValidateConfiguration(
+        gitDirComponents: [Data],
+        commonDirComponents: [Data]
+    ) throws -> ParsedGitConfiguration {
+        var combined = ParsedGitConfiguration.empty
+        if gitDirComponents != commonDirComponents {
+            let commonConfig = try readConfiguration(at: commonDirComponents + [Data("config".utf8)])
+            try combined.merge(commonConfig)
+        }
+        let gitConfig = try readConfiguration(at: gitDirComponents + [Data("config".utf8)])
+        try combined.merge(gitConfig)
+        try combined.validateForPreflight()
+        return combined
+    }
+
+    private func readConfiguration(at components: [Data]) throws -> ParsedGitConfiguration {
+        guard !components.isEmpty else {
+            throw GitPreflightFailure(.malformedConfiguration)
+        }
+        let parent = Array(components.dropLast())
+        let leaf = components.last!
+        let parentDescriptor = try openDirectory(components: parent)
+        defer { Darwin.close(parentDescriptor) }
+        guard entryExists(named: leaf, relativeTo: parentDescriptor) else {
+            return .empty
+        }
+        let bytes = try readRegularFile(
+            named: leaf,
+            relativeTo: parentDescriptor,
+            maxBytes: GitPreflightLimits.maxConfigBytes
+        )
+        guard bytes.count <= Int(GitPreflightLimits.maxConfigBytes) else {
+            throw GitPreflightFailure(.oversizeConfiguration)
+        }
+        return try ParsedGitConfiguration.parse(bytes)
+    }
+
+    private func resolveHead(
+        gitDirComponents: [Data],
+        commonDirComponents: [Data],
+        algorithm: GitObjectHashAlgorithm
+    ) throws -> GitObjectID {
+        let headComponents = gitDirComponents + [Data("HEAD".utf8)]
+        let headBytes = try readFile(at: headComponents, maxBytes: GitPreflightLimits.maxHeadBytes)
+        guard let text = decodeGitText(headBytes)?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !text.isEmpty else {
+            throw GitPreflightFailure(.malformedHead)
+        }
+        if text.hasPrefix("ref: ") {
+            let refPath = String(text.dropFirst(5)).trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !refPath.isEmpty, !refPath.contains("\\") else {
+                throw GitPreflightFailure(.malformedHead)
+            }
+            let refComponents = refPath.split(separator: "/").map {
+                Data($0.utf8)
+            }
+            guard !refComponents.isEmpty else {
+                throw GitPreflightFailure(.malformedHead)
+            }
+            return try resolveRefChain(
+                refComponents: commonDirComponents + refComponents,
+                algorithm: algorithm,
+                depth: 0
+            )
+        }
+        guard let objectID = GitObjectID(algorithm: algorithm, hex: text.lowercased()) else {
+            throw GitPreflightFailure(.malformedHead)
+        }
+        return objectID
+    }
+
+    private func resolveRefChain(
+        refComponents: [Data],
+        algorithm: GitObjectHashAlgorithm,
+        depth: UInt32
+    ) throws -> GitObjectID {
+        guard depth < GitPreflightLimits.maxRefChainDepth else {
+            throw GitPreflightFailure(.refChainLimit)
+        }
+        let bytes = try readFile(at: refComponents, maxBytes: GitPreflightLimits.maxRefFileBytes)
+        guard let text = decodeGitText(bytes)?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !text.isEmpty else {
+            throw GitPreflightFailure(.malformedHead)
+        }
+        if text.hasPrefix("ref: ") {
+            let refPath = String(text.dropFirst(5)).trimmingCharacters(in: .whitespacesAndNewlines)
+            let nextComponents = refPath.split(separator: "/").map { Data($0.utf8) }
+            guard !nextComponents.isEmpty else {
+                throw GitPreflightFailure(.malformedHead)
+            }
+            let gitDirPrefix: [Data]
+            if let refsIndex = refComponents.firstIndex(of: Data("refs".utf8)) {
+                gitDirPrefix = Array(refComponents.prefix(refsIndex))
+            } else {
+                gitDirPrefix = []
+            }
+            return try resolveRefChain(
+                refComponents: gitDirPrefix + nextComponents,
+                algorithm: algorithm,
+                depth: depth + 1
+            )
+        }
+        guard let objectID = GitObjectID(algorithm: algorithm, hex: text.lowercased()) else {
+            throw GitPreflightFailure(.malformedHead)
+        }
+        return objectID
+    }
+
+    private func buildManifest(
+        layout: GitPreflightLayout,
+        algorithm: GitObjectHashAlgorithm
+    ) throws -> GitMetadataDescriptorManifest {
+        var collected: [GitMetadataDescriptor] = []
+
+        func append(_ descriptor: GitMetadataDescriptor) throws {
+            guard collected.count < Int(limits.gitMetadataDescriptors) else {
+                throw GitPreflightFailure(.descriptorBudgetExceeded)
+            }
+            collected.append(descriptor)
+        }
+
+        let indexComponents = layout.gitDirComponents + [Data("index".utf8)]
+        if (try? inspectIdentity(at: indexComponents)) != nil {
+            try append(try openMetadataDescriptor(
+                components: indexComponents,
+                role: .index
+            ))
+        }
+
+        let objectsRoot = layout.commonDirComponents + [Data("objects".utf8)]
+        try collectLooseObjects(
+            under: objectsRoot,
+            algorithm: algorithm,
+            append: { try append($0) }
+        )
+        try collectPackFiles(
+            under: objectsRoot + [Data("pack".utf8)],
+            algorithm: algorithm,
+            append: { try append($0) }
+        )
+
+        return try GitMetadataDescriptorManifest(
+            descriptors: collected,
+            descriptorLimit: limits.gitMetadataDescriptors
+        )
+    }
+
+    private func collectLooseObjects(
+        under components: [Data],
+        algorithm: GitObjectHashAlgorithm,
+        append: (GitMetadataDescriptor) throws -> Void
+    ) throws {
+        guard entryExists(at: components) else { return }
+        let directoryDescriptor = try openDirectory(components: components)
+        guard let cursor = fdopendir(directoryDescriptor) else {
+            throw GitPreflightFailure(.unreadable)
+        }
+
+        while let entry = readdir(cursor) {
+            var name = entry.pointee.d_name
+            let prefixBytes = withUnsafeBytes(of: &name) { raw -> Data in
+                let count = raw.firstIndex(of: 0) ?? raw.count
+                return Data(raw.prefix(count))
+            }
+            guard prefixBytes != Data(".".utf8), prefixBytes != Data("..".utf8) else { continue }
+            guard GitObjectNaming.isLooseObjectPrefix(prefixBytes, algorithm: algorithm) else {
+                continue
+            }
+            let prefixDescriptor = try openDirectory(
+                components: components + [prefixBytes]
+            )
+            guard let objectCursor = fdopendir(prefixDescriptor) else {
+                throw GitPreflightFailure(.unreadable)
+            }
+            while let objectEntry = readdir(objectCursor) {
+                var objectName = objectEntry.pointee.d_name
+                let suffixBytes = withUnsafeBytes(of: &objectName) { raw -> Data in
+                    let count = raw.firstIndex(of: 0) ?? raw.count
+                    return Data(raw.prefix(count))
+                }
+                guard suffixBytes != Data(".".utf8), suffixBytes != Data("..".utf8) else { continue }
+                guard let objectID = GitObjectNaming.looseObjectID(
+                    prefix: prefixBytes,
+                    suffix: suffixBytes,
+                    algorithm: algorithm
+                ) else {
+                    continue
+                }
+                let objectComponents = components + [prefixBytes, suffixBytes]
+                let descriptor = try openMetadataDescriptor(
+                    components: objectComponents,
+                    role: .looseObject,
+                    objectID: objectID
+                )
+                try append(descriptor)
+            }
+            closedir(objectCursor)
+        }
+        closedir(cursor)
+    }
+
+    private func collectPackFiles(
+        under components: [Data],
+        algorithm: GitObjectHashAlgorithm,
+        append: (GitMetadataDescriptor) throws -> Void
+    ) throws {
+        guard entryExists(at: components) else { return }
+        let directoryDescriptor = try openDirectory(components: components)
+        guard let cursor = fdopendir(directoryDescriptor) else {
+            throw GitPreflightFailure(.unreadable)
+        }
+
+        while let entry = readdir(cursor) {
+            var name = entry.pointee.d_name
+            let nameBytes = withUnsafeBytes(of: &name) { raw -> Data in
+                let count = raw.firstIndex(of: 0) ?? raw.count
+                return Data(raw.prefix(count))
+            }
+            guard nameBytes != Data(".".utf8), nameBytes != Data("..".utf8) else { continue }
+            guard let role = GitObjectNaming.packFileRole(nameBytes, algorithm: algorithm) else {
+                continue
+            }
+            let descriptor = try openMetadataDescriptor(
+                components: components + [nameBytes],
+                role: role
+            )
+            try append(descriptor)
+        }
+        closedir(cursor)
+    }
+
+    private func openMetadataDescriptor(
+        components: [Data],
+        role: GitMetadataDescriptorRole,
+        objectID: GitObjectID? = nil
+    ) throws -> GitMetadataDescriptor {
+        let before = try inspectIdentity(at: components)
+        let parent = Array(components.dropLast())
+        let leaf = components.last!
+        let parentDescriptor = try openDirectory(components: parent)
+        defer { Darwin.close(parentDescriptor) }
+        let opened = try openRegularFile(named: leaf, relativeTo: parentDescriptor)
+        defer { Darwin.close(opened) }
+        let after = try fstatIdentity(opened)
+        guard before == after,
+              FileBrokerPlatform.classify(mode: mode_t(after.mode)) == .regular,
+              after.device == rootIdentity.device else {
+            throw GitPreflightFailure(.identityChangedDuringPreflight)
+        }
+        guard let relativePath = try verifiedPath(from: components) else {
+            throw GitPreflightFailure(.unreadable)
+        }
+        return GitMetadataDescriptor(
+            role: role,
+            relativePath: relativePath,
+            identity: after,
+            objectID: objectID
+        )
+    }
+
+    private func parseGitDirPointer(_ contents: Data, anchor: [Data]) throws -> [Data]? {
+        guard let text = decodeGitText(contents) else { return nil }
+        for rawLine in text.split(whereSeparator: \.isNewline) {
+            let line = rawLine.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard line.hasPrefix("gitdir:") else { continue }
+            let value = line.dropFirst("gitdir:".count).trimmingCharacters(in: .whitespaces)
+            guard !value.isEmpty else { return nil }
+            if value.hasPrefix("/") {
+                return nil
+            }
+            return try resolveInRootRelativePath(Data(value.utf8), anchor: anchor)
+        }
+        return nil
+    }
+
+    private func readOptionalPointerFile(name: Data, parentComponents: [Data]) throws -> Data? {
+        let components = parentComponents + [name]
+        guard entryExists(at: components) else { return nil }
+        let bytes = try readFile(at: components, maxBytes: GitPreflightLimits.maxPointerFileBytes)
+        guard let text = decodeGitText(bytes)?
+            .trimmingCharacters(in: .whitespacesAndNewlines),
+              !text.isEmpty else {
+            throw GitPreflightFailure(.malformedConfiguration)
+        }
+        if text.hasPrefix("/") {
+            return nil
+        }
+        return Data(text.utf8)
+    }
+
+    private func resolveInRootRelativePath(_ target: Data, anchor: [Data]) throws -> [Data]? {
+        var components = anchor
+        for piece in splitRelativePath(target) {
+            if piece == Data(".".utf8) { continue }
+            if piece == Data("..".utf8) {
+                guard !components.isEmpty else { return nil }
+                components.removeLast()
+                continue
+            }
+            guard (try? VerifiedPathComponent(bytes: piece)) != nil else { return nil }
+            components.append(piece)
+            guard components.count <= Int(limits.traversalDepth) else { return nil }
+        }
+        return components
+    }
+
+    private func rejectIfPresent(
+        name: Data,
+        parentComponents: [Data],
+        reason: GitPreflightRejectionReason
+    ) throws {
+        if entryExists(at: parentComponents + [name]) {
+            throw GitPreflightFailure(reason)
+        }
+    }
+
+    private func readFile(at components: [Data], maxBytes: UInt64) throws -> Data {
+        guard !components.isEmpty else {
+            throw GitPreflightFailure(.unreadable)
+        }
+        let parent = Array(components.dropLast())
+        let leaf = components.last!
+        let parentDescriptor = try openDirectory(components: parent)
+        defer { Darwin.close(parentDescriptor) }
+        return try readRegularFile(
+            named: leaf,
+            relativeTo: parentDescriptor,
+            maxBytes: maxBytes
+        )
+    }
+
+    private func entryExists(at components: [Data]) -> Bool {
+        guard !components.isEmpty else {
+            return false
+        }
+        let parent = Array(components.dropLast())
+        let leaf = components.last!
+        guard let parentDescriptor = try? openDirectory(components: parent) else {
+            return false
+        }
+        defer { Darwin.close(parentDescriptor) }
+        return entryExists(named: leaf, relativeTo: parentDescriptor)
+    }
+
+    private func inspectIdentity(at components: [Data]) throws -> FileIdentity {
+        guard !components.isEmpty else {
+            throw GitPreflightFailure(.unreadable)
+        }
+        let parent = Array(components.dropLast())
+        let leaf = components.last!
+        let parentDescriptor = try openDirectory(components: parent)
+        defer { Darwin.close(parentDescriptor) }
+        return try inspect(leaf, relativeTo: parentDescriptor)
+    }
+
+    private func openDirectory(components: [Data]) throws -> Int32 {
+        try withRootDescriptor { rootFD in
+            var current = rootFD
+            var ownsCurrent = false
+            defer {
+                if ownsCurrent { Darwin.close(current) }
+            }
+            for component in components {
+                let inspected = try inspect(component, relativeTo: current)
+                guard FileBrokerPlatform.classify(mode: mode_t(inspected.mode)) == .directory else {
+                    throw GitPreflightFailure(.identityChangedDuringPreflight)
+                }
+                guard inspected.device == rootIdentity.device else {
+                    throw GitPreflightFailure(.mountBoundary)
+                }
+                let opened = try openDirectoryEntry(named: component, relativeTo: current)
+                if ownsCurrent { Darwin.close(current) }
+                current = opened
+                ownsCurrent = true
+                let openedIdentity = try fstatIdentity(opened)
+                guard sameObjectAndType(inspected, openedIdentity),
+                      openedIdentity.device == rootIdentity.device else {
+                    throw GitPreflightFailure(.identityChangedDuringPreflight)
+                }
+            }
+            let duplicate: Int32
+            if ownsCurrent {
+                duplicate = fcntl(current, F_DUPFD_CLOEXEC, 0)
+                Darwin.close(current)
+            } else {
+                duplicate = fcntl(rootFD, F_DUPFD_CLOEXEC, 0)
+            }
+            guard duplicate >= 0 else { throw GitPreflightFailure(.unreadable) }
+            return duplicate
+        }
+    }
+
+    private func inspect(_ name: Data, relativeTo descriptor: Int32) throws -> FileIdentity {
+        do {
+            return try gitPreflightInspect(name, relativeTo: descriptor)
+        } catch let failure as GitPreflightFailure {
+            throw failure
+        } catch {
+            throw GitPreflightFailure(.unreadable)
+        }
+    }
+
+    private func openDirectoryEntry(named name: Data, relativeTo descriptor: Int32) throws -> Int32 {
+        try name.withNullTerminatedBytes { pointer in
+            let opened = openat(descriptor, pointer, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC)
+            guard opened >= 0 else { throw GitPreflightFailure(.unreadable) }
+            return opened
+        }
+    }
+
+    private func openRegularFile(named name: Data, relativeTo descriptor: Int32) throws -> Int32 {
+        try name.withNullTerminatedBytes { pointer in
+            let opened = openat(
+                descriptor,
+                pointer,
+                O_RDONLY | O_NONBLOCK | O_NOFOLLOW | O_CLOEXEC
+            )
+            guard opened >= 0 else { throw GitPreflightFailure(.unreadable) }
+            var value = stat()
+            guard fstat(opened, &value) == 0,
+                  value.st_mode & S_IFMT == S_IFREG else {
+                Darwin.close(opened)
+                throw GitPreflightFailure(.identityChangedDuringPreflight)
+            }
+            return opened
+        }
+    }
+
+    private func readRegularFile(
+        named name: Data,
+        relativeTo descriptor: Int32,
+        maxBytes: UInt64
+    ) throws -> Data {
+        let opened = try openRegularFile(named: name, relativeTo: descriptor)
+        defer { Darwin.close(opened) }
+        let identity = try fstatIdentity(opened)
+        guard identity.size <= maxBytes else {
+            throw GitPreflightFailure(.oversizeConfiguration)
+        }
+        guard let allocationSize = Int(exactly: identity.size) else {
+            throw GitPreflightFailure(.unreadable)
+        }
+        var buffer = Data(count: allocationSize)
+        var offset = 0
+        while offset < allocationSize {
+            let count = buffer.withUnsafeMutableBytes { rawBuffer -> Int in
+                guard let baseAddress = rawBuffer.baseAddress else { return 0 }
+                return Darwin.read(
+                    opened,
+                    baseAddress.advanced(by: offset),
+                    allocationSize - offset
+                )
+            }
+            guard count > 0 else { throw GitPreflightFailure(.unreadable) }
+            offset += count
+        }
+        var extra: UInt8 = 0
+        let extraCount = Darwin.read(opened, &extra, 1)
+        guard extraCount == 0 else {
+            throw GitPreflightFailure(.oversizeConfiguration)
+        }
+        return buffer
+    }
+
+    private func entryExists(named name: Data, relativeTo descriptor: Int32) -> Bool {
+        (try? inspect(name, relativeTo: descriptor)) != nil
+    }
+
+    private func fstatIdentity(_ descriptor: Int32) throws -> FileIdentity {
+        var value = stat()
+        guard fstat(descriptor, &value) == 0 else {
+            throw GitPreflightFailure(.unreadable)
+        }
+        return try FileIdentity(value)
+    }
+
+    private func verifiedPath(from components: [Data]) throws -> VerifiedRelativePath? {
+        let verified = try components.map { try VerifiedPathComponent(bytes: $0) }
+        guard !verified.isEmpty else { return nil }
+        return try VerifiedRelativePath(components: verified)
+    }
+}
+
+fileprivate struct GitPreflightPointer {
+    let worktreeRootComponents: [Data]
+    let gitDirComponents: [Data]
+}
+
+fileprivate struct GitPreflightLayout {
+    let worktreeRootComponents: [Data]
+    let gitDirComponents: [Data]
+    let commonDirComponents: [Data]
+}
+
+fileprivate struct ParsedGitConfiguration {
+    var repositoryFormatVersion: Int
+    var objectHashAlgorithm: GitObjectHashAlgorithm
+    private var rejectedKeys: Set<String>
+    private var extensions: Set<String>
+
+    static let empty = ParsedGitConfiguration(
+        repositoryFormatVersion: 0,
+        objectHashAlgorithm: .sha1,
+        rejectedKeys: [],
+        extensions: []
+    )
+
+    mutating func merge(_ other: ParsedGitConfiguration) throws {
+        if other.repositoryFormatVersion > repositoryFormatVersion {
+            repositoryFormatVersion = other.repositoryFormatVersion
+        }
+        if other.objectHashAlgorithm == .sha256 {
+            objectHashAlgorithm = .sha256
+        }
+        rejectedKeys.formUnion(other.rejectedKeys)
+        extensions.formUnion(other.extensions)
+    }
+
+    func validateForPreflight() throws {
+        if !rejectedKeys.isEmpty {
+            if rejectedKeys.contains(where: { $0.hasPrefix("include") }) {
+                throw GitPreflightFailure(.configurationInclude)
+            }
+            if rejectedKeys.contains(where: {
+                $0.contains("alternate") || $0.contains("promisor") || $0.contains("partialclone")
+            }) {
+                throw GitPreflightFailure(.promisorConfiguration)
+            }
+            if rejectedKeys.contains(where: { $0.contains("replace") }) {
+                throw GitPreflightFailure(.replacementReferences)
+            }
+            if rejectedKeys.contains(where: { $0.contains("safe.directory") }) {
+                throw GitPreflightFailure(.unsafeOwnershipMarker)
+            }
+            throw GitPreflightFailure(.malformedConfiguration)
+        }
+        let unsupported = extensions.subtracting(["objectformat"])
+        if !unsupported.isEmpty {
+            throw GitPreflightFailure(.unsupportedExtension)
+        }
+        if repositoryFormatVersion > 1 {
+            throw GitPreflightFailure(.unsupportedExtension)
+        }
+    }
+
+    static func parse(_ bytes: Data) throws -> ParsedGitConfiguration {
+        guard let text = decodeGitText(bytes) else {
+            throw GitPreflightFailure(.malformedConfiguration)
+        }
+        var config = ParsedGitConfiguration.empty
+        var section: String?
+        var subsection: String?
+
+        for rawLine in text.split(whereSeparator: \.isNewline) {
+            let line = rawLine.trimmingCharacters(in: .whitespacesAndNewlines)
+            if line.isEmpty || line.hasPrefix("#") || line.hasPrefix(";") {
+                continue
+            }
+            if line.hasPrefix("[") {
+                guard line.hasSuffix("]") else {
+                    throw GitPreflightFailure(.malformedConfiguration)
+                }
+                let body = String(line.dropFirst().dropLast())
+                if body.lowercased().hasPrefix("include") {
+                    config.rejectedKeys.insert(body.lowercased())
+                    section = nil
+                    subsection = nil
+                    continue
+                }
+                if let quote = body.firstIndex(of: "\"") {
+                    let sectionName = String(body[..<quote])
+                    guard body.hasSuffix("\"") else {
+                        throw GitPreflightFailure(.malformedConfiguration)
+                    }
+                    section = sectionName
+                    subsection = String(body[body.index(after: quote)..<body.index(before: body.endIndex)])
+                } else {
+                    section = body
+                    subsection = nil
+                }
+                continue
+            }
+            guard let equals = line.firstIndex(of: "=") else {
+                throw GitPreflightFailure(.malformedConfiguration)
+            }
+            let key = String(line[..<equals]).trimmingCharacters(in: .whitespaces)
+            let value = String(line[line.index(after: equals)...]).trimmingCharacters(in: .whitespaces)
+            guard !key.isEmpty else {
+                throw GitPreflightFailure(.malformedConfiguration)
+            }
+            let qualified = [section, subsection, key]
+                .compactMap { $0?.trimmingCharacters(in: .whitespacesAndNewlines) }
+                .filter { !$0.isEmpty }
+                .joined(separator: ".")
+                .lowercased()
+
+            if qualified.hasPrefix("include") || qualified.contains(".include") {
+                config.rejectedKeys.insert(qualified)
+            } else if qualified.contains("alternates") || qualified.contains("promisor")
+                        || qualified.contains("partialclone") || qualified.contains("extensions.partialclone") {
+                config.rejectedKeys.insert(qualified)
+            } else if qualified.contains("replace") {
+                config.rejectedKeys.insert(qualified)
+            } else if qualified == "safe.directory" {
+                config.rejectedKeys.insert(qualified)
+            } else if qualified == "core.repositoryformatversion" {
+                guard let version = Int(value) else {
+                    throw GitPreflightFailure(.malformedConfiguration)
+                }
+                config.repositoryFormatVersion = max(config.repositoryFormatVersion, version)
+            } else if qualified == "extensions.objectformat" {
+                switch value.lowercased() {
+                case "sha1":
+                    config.objectHashAlgorithm = .sha1
+                case "sha256":
+                    config.objectHashAlgorithm = .sha256
+                default:
+                    throw GitPreflightFailure(.unsupportedExtension)
+                }
+                config.extensions.insert("objectformat")
+            } else if qualified.hasPrefix("extensions.") {
+                let name = String(qualified.dropFirst("extensions.".count))
+                config.extensions.insert(name)
+            }
+        }
+        return config
+    }
+}
+
+fileprivate enum GitObjectNaming {
+    static func isLooseObjectPrefix(_ bytes: Data, algorithm: GitObjectHashAlgorithm) -> Bool {
+        guard bytes.count == 2, let text = String(data: bytes, encoding: .utf8) else { return false }
+        return text.allSatisfy(isLowerHexDigit)
+    }
+
+    static func looseObjectID(
+        prefix: Data,
+        suffix: Data,
+        algorithm: GitObjectHashAlgorithm
+    ) -> GitObjectID? {
+        guard let prefixText = String(data: prefix, encoding: .utf8),
+              let suffixText = String(data: suffix, encoding: .utf8) else {
+            return nil
+        }
+        return GitObjectID(algorithm: algorithm, hex: prefixText + suffixText)
+    }
+
+    static func packFileRole(
+        _ nameBytes: Data,
+        algorithm: GitObjectHashAlgorithm
+    ) -> GitMetadataDescriptorRole? {
+        guard let name = String(data: nameBytes, encoding: .utf8) else { return nil }
+        let hashLength = algorithm == .sha1 ? 40 : 64
+        let idxPrefix = "pack-"
+        let idxSuffix = ".idx"
+        let packSuffix = ".pack"
+        let revSuffix = ".rev"
+        if name.hasPrefix(idxPrefix), name.hasSuffix(idxSuffix) {
+            let hash = String(name.dropFirst(idxPrefix.count).dropLast(idxSuffix.count))
+            guard hash.count == hashLength, hash.allSatisfy(isLowerHexDigit) else { return nil }
+            return .packIndex
+        }
+        if name.hasPrefix(idxPrefix), name.hasSuffix(packSuffix) {
+            let hash = String(name.dropFirst(idxPrefix.count).dropLast(packSuffix.count))
+            guard hash.count == hashLength, hash.allSatisfy(isLowerHexDigit) else { return nil }
+            return .packData
+        }
+        if name.hasPrefix(idxPrefix), name.hasSuffix(revSuffix) {
+            let hash = String(name.dropFirst(idxPrefix.count).dropLast(revSuffix.count))
+            guard hash.count == hashLength, hash.allSatisfy(isLowerHexDigit) else { return nil }
+            return .packReverseIndex
+        }
+        return nil
+    }
+}
+
+fileprivate struct GitPreflightFailure: Error {
+    let reason: GitPreflightRejectionReason
+
+    init(_ reason: GitPreflightRejectionReason) {
+        self.reason = reason
+    }
+}
+
+private func decodeGitText(_ bytes: Data) -> String? {
+    String(data: bytes, encoding: .utf8)?
+        .replacingOccurrences(of: "\u{0}", with: "")
+}
+
+private func splitRelativePath(_ target: Data) -> [Data] {
+    target.split(separator: UInt8(ascii: "/"), omittingEmptySubsequences: false)
+        .map { Data($0) }
+}
+
+private func isLowerHexDigit(_ character: Character) -> Bool {
+    guard let scalar = character.unicodeScalars.first, character.unicodeScalars.count == 1 else {
+        return false
+    }
+    switch scalar.value {
+    case 48...57, 97...102: return true
+    default: return false
     }
 }
 
