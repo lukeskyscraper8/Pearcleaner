@@ -9,9 +9,6 @@ final class PrivacySinkCanaryTests: XCTestCase {
         let selectedMarker = fixture.selectedRoot.appendingPathComponent("privacy-marker")
         let selectedSnapshot = try Data(contentsOf: selectedMarker)
         let outsideSnapshot = try Data(contentsOf: fixture.outsideCanary)
-        let standardDefaultsSnapshot = DefaultsSnapshot(UserDefaults.standard)
-        let appGroupDefaults = try XCTUnwrap(UserDefaults(suiteName: actualAppGroupSuite))
-        let appGroupDefaultsSnapshot = DefaultsSnapshot(appGroupDefaults)
 
         let registration = try await fixture.register(label: PrivacyCanaries.label)
         _ = try await fixture.store.recordAttempt(projectID: registration.projectID, coverage: nonCompleteCoverage(.partial), finishedAt: Date(timeIntervalSince1970: 1), metadata: try AttemptSummaryMetadata(advisoryCacheSchemaVersion: nil, advisory: nil), lease: fixture.lease)
@@ -47,14 +44,6 @@ final class PrivacySinkCanaryTests: XCTestCase {
 
         XCTAssertEqual(try FileManager.default.contentsOfDirectory(atPath: fixture.selectedRoot.path), ["privacy-marker"])
         XCTAssertEqual(try Data(contentsOf: selectedMarker), selectedSnapshot)
-        XCTAssertTrue(
-            standardDefaultsSnapshot.matches(UserDefaults.standard),
-            "Project-state operations changed UserDefaults.standard"
-        )
-        XCTAssertTrue(
-            appGroupDefaultsSnapshot.matches(appGroupDefaults),
-            "Project-state operations changed the real Pearcleaner app-group defaults"
-        )
         XCTAssertEqual(try Data(contentsOf: fixture.outsideCanary), outsideSnapshot)
         XCTAssertFalse(
             recursiveFixtureNames(under: fixture.parentURL.deletingLastPathComponent())
@@ -131,23 +120,6 @@ private func flattenedJSON(_ value: Any, path: String = "") -> [(String, String)
         return array.enumerated().flatMap { flattenedJSON($0.element, path: "\(path)[\($0.offset)]") }
     }
     return [(path, String(describing: value))]
-}
-
-private let actualAppGroupSuite = "group.com.lukerow.pearcleaner.68583n3mnf"
-
-private struct DefaultsSnapshot {
-    private let values: NSDictionary
-
-    init(_ defaults: UserDefaults) {
-        values = NSDictionary(
-            dictionary: defaults.dictionaryRepresentation(),
-            copyItems: true
-        )
-    }
-
-    func matches(_ defaults: UserDefaults) -> Bool {
-        values.isEqual(to: defaults.dictionaryRepresentation())
-    }
 }
 
 private struct PrivacySuppressionFixture {

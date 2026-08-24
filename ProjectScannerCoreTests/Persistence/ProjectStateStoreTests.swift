@@ -270,7 +270,18 @@ final class ProjectStateStoreTests: XCTestCase {
                     lease: baseline.lease
                 )
             }
-            assertInjectedFailureOrdering(site, events: operations.snapshot())
+            let events = operations.snapshot()
+            assertInjectedFailureOrdering(site, events: events)
+            XCTAssertEqual(
+                operations.trackedDescriptorCount(for: .stagingFile),
+                0,
+                "Fail-after path retained staging descriptor ownership: \(site)"
+            )
+            XCTAssertEqual(
+                events.filter { $0 == .closeStagingFileAfterFailure }.count,
+                site == .closeStagingFileBeforeRename ? 0 : 1,
+                "Fail-after path used the wrong staging cleanup-close count: \(site)"
+            )
             XCTAssertEqual(
                 try Data(contentsOf: baseline.stateFile),
                 priorBytes,
@@ -915,14 +926,34 @@ private func assertKnownSuccessfulCloseIsNotRetried() async throws {
     let opaqueReadState = atomicRoot
         .appendingPathComponent("Pearcleaner/ProjectScanner/opaque-read-close.json")
     XCTAssertTrue(FileManager.default.createFile(
-        atPath: opaqueReadState.path, contents: Data("invalid".utf8),
-        attributes: [.posixPermissions: 0o644]
+        atPath: opaqueReadState.path, contents: Data("valid-raw-state-bytes".utf8),
+        attributes: [.posixPermissions: 0o600]
     ))
     XCTAssertThrowsError(try opaqueReadAtomic.read(name: opaqueReadState.lastPathComponent))
+    let opaqueReadEvents = opaqueReadOperations.snapshot()
     XCTAssertEqual(
-        opaqueReadOperations.snapshot().filter { $0 == .closeStateFileAfterRead }.count,
+        opaqueReadEvents.filter {
+            [
+                StateSyscallSite.openStateFileForRead,
+                .statStateFileBeforeRead,
+                .readStateFile,
+                .statStateFileAfterRead,
+                .closeStateFileAfterRead,
+            ].contains($0)
+        },
+        [
+            .openStateFileForRead,
+            .statStateFileBeforeRead,
+            .readStateFile,
+            .statStateFileAfterRead,
+            .closeStateFileAfterRead,
+        ],
+        "Opaque close proof must reach the primary close after a normal successful read"
+    )
+    XCTAssertEqual(
+        opaqueReadEvents.filter { $0 == .closeStateFileAfterRead }.count,
         1,
-        "Read cleanup retried an opaque dispatched close"
+        "Primary read close was retried after its opaque dispatched outcome"
     )
     XCTAssertTrue(
         opaqueReadOperations.consumeRecycledDescriptorsWereOpen(),

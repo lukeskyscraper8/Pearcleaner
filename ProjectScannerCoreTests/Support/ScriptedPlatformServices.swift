@@ -322,6 +322,9 @@ final class ScriptedStateFileSystemOperations: StateFileSystemOperations, @unche
     func snapshot() -> [StateSyscallSite] { lock.withLock { events } }
     func syncSnapshot() -> [ScriptedStateSyncEvent] { lock.withLock { syncEvents } }
     func cleanupSnapshot() -> [ProducerCleanup] { lock.withLock { producerCleanups } }
+    func trackedDescriptorCount(for role: ScriptedStateDescriptorRole) -> Int {
+        lock.withLock { descriptorRoles.values.filter { $0 == role }.count }
+    }
     func priorStagingEntryWasMutatedBeforeUnlink() -> Bool {
         lock.withLock { priorStagingEntryWasMutated }
     }
