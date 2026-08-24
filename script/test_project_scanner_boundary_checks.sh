@@ -461,7 +461,7 @@ mutate_bookmark_string_convertible() { append_core $'extension ProjectBookmark: 
 mutate_redacted_string_convertible() { append_core $'extension RedactedSourceField: CustomStringConvertible {\n    public var description: String { text }\n}'; }
 mutate_key_material_raw_storage() {
     replace_once "ProjectScannerCore/Privacy/Fingerprint.swift" \
-        "fileprivate let key: SymmetricKey" "public let key: SymmetricKey"
+        "internal let key: SymmetricKey" "public let key: SymmetricKey"
 }
 mutate_key_material_raw_initializer() {
     replace_once "ProjectScannerCore/Privacy/Fingerprint.swift" \
