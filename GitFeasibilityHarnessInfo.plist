@@ -22,5 +22,13 @@
 	<true/>
 	<key>LSMinimumSystemVersion</key>
 	<string>13.0</string>
+	<key>NSXPCService</key>
+	<dict>
+		<key>com.lukerow.Pearcleaner.GitEvidenceService</key>
+		<dict>
+			<key>ServiceType</key>
+			<string>Application</string>
+		</dict>
+	</dict>
 </dict>
 </plist>

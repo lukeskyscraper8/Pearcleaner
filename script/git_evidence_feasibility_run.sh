@@ -26,6 +26,24 @@ require_command() {
     fi
 }
 
+reseal_harness_bundle() {
+    local app_path="$1"
+
+    if [[ ! -d "$app_path" ]]; then
+        fail "harness app bundle not found: $app_path" 66
+    fi
+
+    local authority
+    authority="$(/usr/bin/codesign -dv --verbose=2 "$app_path" 2>&1 | /usr/bin/awk -F= '/^Authority=/{print $2; exit}')"
+    if [[ -z "$authority" ]]; then
+        fail "unable to determine codesign authority for harness re-seal" 1
+    fi
+
+    if ! /usr/bin/codesign --force --deep --sign "$authority" -o runtime "$app_path"; then
+        fail "failed to re-seal harness bundle after embedding GitEvidenceService.xpc" 1
+    fi
+}
+
 verify_codesign_not_adhoc() {
     local app_path="$1"
 
@@ -79,6 +97,7 @@ xcodebuild -quiet \
     -disableAutomaticPackageResolution \
     build
 
+reseal_harness_bundle "$APP_PATH"
 verify_codesign_not_adhoc "$APP_PATH"
 
 if [[ ! -x "$EXECUTABLE_PATH" ]]; then
