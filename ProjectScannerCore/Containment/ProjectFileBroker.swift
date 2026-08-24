@@ -1817,7 +1817,7 @@ fileprivate func splitLinkTarget(_ target: Data) -> [Data] {
         separator: UInt8(ascii: "/"),
         omittingEmptySubsequences: false
     )
-    return components.map(Data.init)
+    return components.map { Data(bytes: $0) }
 }
 
 fileprivate func physicalPathByteCount(_ components: [Data]) -> UInt64 {
