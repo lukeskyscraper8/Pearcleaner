@@ -6,6 +6,8 @@ enum PrivacyCanaries {
     static let package = "package-" + String(repeating: "G", count: 40)
     static let advisory = "advisory-" + String(repeating: "A", count: 39)
     static let script = "script-" + String(repeating: "C", count: 41)
+    static let version = "version-" + String(repeating: "V", count: 40)
+    static let label = "label-" + String(repeating: "L", count: 42)
 
-    static let all = [secret, path, package, advisory, script]
+    static let all = [secret, path, package, advisory, script, version]
 }
