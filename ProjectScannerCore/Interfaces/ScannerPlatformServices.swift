@@ -115,3 +115,15 @@ public protocol GitIndexHeadBlobConsuming: Sendable {
         bytes: Data
     ) async
 }
+
+public protocol ScanSessionIDGenerating: Sendable {
+    func makeScanSessionID() -> ScanSessionID
+}
+
+public struct SystemScanSessionIDGenerator: ScanSessionIDGenerating {
+    public init() {}
+
+    public func makeScanSessionID() -> ScanSessionID {
+        ScanSessionID(rawValue: UUID())
+    }
+}
