@@ -97,6 +97,7 @@ final class AtomicStateFile: @unchecked Sendable {
         }
 
         var owned = true
+        var closeAttempted = false
         do {
             let before = try operations.status(descriptor: descriptor, site: .statStateFileBeforeRead)
             try validateStateFile(before)
@@ -106,11 +107,15 @@ final class AtomicStateFile: @unchecked Sendable {
             let data = try operations.read(descriptor: descriptor, count: count, site: .readStateFile)
             let after = try operations.status(descriptor: descriptor, site: .statStateFileAfterRead)
             guard sameReadSnapshot(before, after) else { throw ProjectStateError.invalidState }
+            closeAttempted = true
             try operations.close(descriptor: descriptor, site: .closeStateFileAfterRead)
             owned = false
             return data
         } catch {
-            if closeSucceeded(error, at: .closeStateFileAfterRead) { owned = false }
+            if closeAttempted,
+               !stateCloseFailedBeforeDispatch(error, at: .closeStateFileAfterRead) {
+                owned = false
+            }
             if owned {
                 closeDescriptorAfterFailure(
                     descriptor, site: .closeStateFileAfterRead,
@@ -151,7 +156,9 @@ final class AtomicStateFile: @unchecked Sendable {
                 try operations.close(descriptor: descriptor!, site: .closeStagingFileBeforeRename)
                 descriptor = nil
             } catch {
-                if closeSucceeded(error, at: .closeStagingFileBeforeRename) { descriptor = nil }
+                if !stateCloseFailedBeforeDispatch(error, at: .closeStagingFileBeforeRename) {
+                    descriptor = nil
+                }
                 throw error
             }
 
@@ -213,15 +220,20 @@ final class AtomicStateFile: @unchecked Sendable {
         }
 
         var streamOpen = true
+        var streamCloseAttempted = false
         var entries = StateStagingEntryAccumulator()
         do {
             while let bytes = try operations.readDirectoryEntry(stream, site: .readStagingDirectoryEntry) {
                 try entries.consume(bytes)
             }
+            streamCloseAttempted = true
             try operations.closeDirectoryStream(stream, site: .closeStagingDirectoryStream)
             streamOpen = false
         } catch {
-            if closeSucceeded(error, at: .closeStagingDirectoryStream) { streamOpen = false }
+            if streamCloseAttempted,
+               !stateCloseFailedBeforeDispatch(error, at: .closeStagingDirectoryStream) {
+                streamOpen = false
+            }
             if streamOpen { closeStreamAfterFailure(stream, operations: operations, original: error) }
             throw closedStateError(error)
         }
@@ -240,15 +252,20 @@ final class AtomicStateFile: @unchecked Sendable {
                 )
             } catch { throw closedStateError(error) }
             var entryOpen = true
+            var entryCloseAttempted = false
             do {
                 let opened = try operations.status(descriptor: entry, site: .statStagingEntry)
                 try validateRegularOwned(opened, exactMode: 0o600, invalid: .stateUnavailable)
                 guard sameObject(inspected, opened) else { throw ProjectStateError.stateUnavailable }
+                entryCloseAttempted = true
                 try operations.close(descriptor: entry, site: .closeRecoveredStagingEntry)
                 entryOpen = false
                 validated.append((name, StateStableIdentity(opened)))
             } catch {
-                if closeSucceeded(error, at: .closeRecoveredStagingEntry) { entryOpen = false }
+                if entryCloseAttempted,
+                   !stateCloseFailedBeforeDispatch(error, at: .closeRecoveredStagingEntry) {
+                    entryOpen = false
+                }
                 if entryOpen {
                     closeDescriptorAfterFailure(
                         entry, site: .closeRecoveredStagingEntry,
@@ -280,7 +297,7 @@ final class AtomicStateFile: @unchecked Sendable {
         guard descriptor >= 0 else { return }
         do { try operations.close(descriptor: descriptor, site: .closeScannerDirectory) }
         catch {
-            if !closeSucceeded(error, at: .closeScannerDirectory) {
+            if stateCloseFailedBeforeDispatch(error, at: .closeScannerDirectory) {
                 try? SystemStateFileSystemOperations().close(
                     descriptor: descriptor, site: .closeScannerDirectory
                 )
@@ -442,7 +459,7 @@ private func closeOwned(
         try operations.close(descriptor: current, site: site)
         descriptor = nil
     } catch {
-        if !closeSucceeded(error, at: site) {
+        if stateCloseFailedBeforeDispatch(error, at: site) {
             try? SystemStateFileSystemOperations().close(descriptor: current, site: site)
         }
         descriptor = nil
@@ -456,7 +473,12 @@ private func closeAfterFailure(
     operations: any StateFileSystemOperations
 ) {
     guard let current = descriptor else { return }
-    try? operations.close(descriptor: current, site: site)
+    do { try operations.close(descriptor: current, site: site) }
+    catch {
+        if stateCloseFailedBeforeDispatch(error, at: site) {
+            try? SystemStateFileSystemOperations().close(descriptor: current, site: site)
+        }
+    }
     descriptor = nil
 }
 
@@ -473,7 +495,7 @@ private func closeDescriptorAfterFailure(
     }
     do { try operations.close(descriptor: descriptor, site: site) }
     catch {
-        if !closeSucceeded(error, at: site) {
+        if stateCloseFailedBeforeDispatch(error, at: site) {
             try? SystemStateFileSystemOperations().close(descriptor: descriptor, site: site)
         }
     }
@@ -492,7 +514,15 @@ private func closeStreamAfterFailure(
         )
         return
     }
-    try? operations.closeDirectoryStream(stream, site: .closeStagingDirectoryStream)
+    do {
+        try operations.closeDirectoryStream(stream, site: .closeStagingDirectoryStream)
+    } catch {
+        if stateCloseFailedBeforeDispatch(error, at: .closeStagingDirectoryStream) {
+            try? SystemStateFileSystemOperations().closeDirectoryStream(
+                stream, site: .closeStagingDirectoryStream
+            )
+        }
+    }
 }
 
 private func closeSucceeded(_ error: Error, at site: StateSyscallSite) -> Bool {

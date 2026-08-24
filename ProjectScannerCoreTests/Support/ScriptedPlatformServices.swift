@@ -212,7 +212,7 @@ final class ScriptedUUID: UUIDGenerating, @unchecked Sendable {
         lock.lock()
         defer { lock.unlock() }
         callCount += 1
-        return values.isEmpty ? UUID() : values.removeFirst()
+        return values.removeFirst()
     }
 
     func snapshotCallCount() -> Int {
@@ -239,6 +239,23 @@ actor AsyncStartMarker {
     }
 }
 
+enum ScriptedStateDescriptorRole: Sendable, Equatable {
+    case privateStateParent
+    case sharedDirectory
+    case scannerDirectory
+    case transactionLock
+    case scannerEnumeration
+    case recoveredStagingFile
+    case stateFile
+    case stagingFile
+    case untracked
+}
+
+struct ScriptedStateSyncEvent: Sendable, Equatable {
+    let site: StateSyscallSite
+    let role: ScriptedStateDescriptorRole
+}
+
 final class ScriptedStateFileSystemOperations: StateFileSystemOperations, @unchecked Sendable {
     struct ProducerCleanup: Equatable, Sendable {
         let producer: StateSyscallSite
@@ -253,14 +270,20 @@ final class ScriptedStateFileSystemOperations: StateFileSystemOperations, @unche
     private let busyStartingOccurrence: Int
     private let failUnlockCleanupAfterAcquiredFailure: Bool
     private let recycleClosedDescriptor: Bool
+    private let opaqueDispatchedCloseSite: StateSyscallSite?
+    private let opaqueDispatchedCloseOccurrence: Int
     private let mutateCurrentStagingModeBeforeReinspect: Bool
     private let mutatePriorStagingAfterNextReinspect: Bool
     private let exerciseLockReplacementRetryRace: Bool
     private var siteCounts: [StateSyscallSite: Int] = [:]
     private var events: [StateSyscallSite] = []
+    private var descriptorRoles: [Int32: ScriptedStateDescriptorRole] = [:]
+    private var syncEvents: [ScriptedStateSyncEvent] = []
     private var producerCleanups: [ProducerCleanup] = []
     private var pendingUnlockCleanupFailure = false
     private var recycledDescriptors: Set<Int32> = []
+    private var opaqueClosedStreams: Set<ObjectIdentifier> = []
+    private var opaqueDirectoryStreamWasRetried = false
     private var currentStagingModeWasMutated = false
     private var priorStagingName: String?
     private var priorStagingMutationAttempted = false
@@ -276,6 +299,8 @@ final class ScriptedStateFileSystemOperations: StateFileSystemOperations, @unche
         busyStartingOccurrence: Int = 1,
         failUnlockCleanupAfterAcquiredFailure: Bool = false,
         recycleClosedDescriptor: Bool = false,
+        opaqueDispatchedCloseSite: StateSyscallSite? = nil,
+        opaqueDispatchedCloseOccurrence: Int = 1,
         mutateCurrentStagingModeBeforeReinspect: Bool = false,
         mutatePriorStagingAfterNextReinspect: Bool = false,
         exerciseLockReplacementRetryRace: Bool = false
@@ -287,12 +312,15 @@ final class ScriptedStateFileSystemOperations: StateFileSystemOperations, @unche
         self.busyStartingOccurrence = busyStartingOccurrence
         self.failUnlockCleanupAfterAcquiredFailure = failUnlockCleanupAfterAcquiredFailure
         self.recycleClosedDescriptor = recycleClosedDescriptor
+        self.opaqueDispatchedCloseSite = opaqueDispatchedCloseSite
+        self.opaqueDispatchedCloseOccurrence = opaqueDispatchedCloseOccurrence
         self.mutateCurrentStagingModeBeforeReinspect = mutateCurrentStagingModeBeforeReinspect
         self.mutatePriorStagingAfterNextReinspect = mutatePriorStagingAfterNextReinspect
         self.exerciseLockReplacementRetryRace = exerciseLockReplacementRetryRace
     }
 
     func snapshot() -> [StateSyscallSite] { lock.withLock { events } }
+    func syncSnapshot() -> [ScriptedStateSyncEvent] { lock.withLock { syncEvents } }
     func cleanupSnapshot() -> [ProducerCleanup] { lock.withLock { producerCleanups } }
     func priorStagingEntryWasMutatedBeforeUnlink() -> Bool {
         lock.withLock { priorStagingEntryWasMutated }
@@ -311,6 +339,13 @@ final class ScriptedStateFileSystemOperations: StateFileSystemOperations, @unche
             else { _ = Darwin.close(descriptor) }
         }
         return allOpen
+    }
+    func consumeOpaqueDirectoryStreamWasRetried() -> Bool {
+        lock.withLock {
+            let result = opaqueDirectoryStreamWasRetried
+            opaqueDirectoryStreamWasRetried = false
+            return result
+        }
     }
     func waitUntilReached(timeout: TimeInterval) -> Bool { reached.wait(timeout: .now() + timeout) == .success }
     func waitUntil(_ site: StateSyscallSite, count: Int, timeout: TimeInterval) -> Bool {
@@ -348,6 +383,7 @@ final class ScriptedStateFileSystemOperations: StateFileSystemOperations, @unche
 
     func duplicateParent(_ capability: PrivateStateParentCapability, site: StateSyscallSite) throws -> Int32 {
         let selected = try begin(site); let descriptor = try SystemStateFileSystemOperations().duplicateParent(capability, site: site)
+        recordRole(.privateStateParent, descriptor: descriptor)
         do { try finish(site, failure: selected); return descriptor } catch { cleanupDescriptor(descriptor, producingSite: site); throw error }
     }
     func mkdir(directory: Int32, name: String, mode: mode_t, site: StateSyscallSite) throws { try call(site) { try SystemStateFileSystemOperations().mkdir(directory: directory, name: name, mode: mode, site: site) } }
@@ -386,17 +422,28 @@ final class ScriptedStateFileSystemOperations: StateFileSystemOperations, @unche
     }
     func open(directory: Int32, name: String, flags: Int32, mode: mode_t, site: StateSyscallSite) throws -> Int32 {
         let selected = try begin(site); let descriptor = try SystemStateFileSystemOperations().open(directory: directory, name: name, flags: flags, mode: mode, site: site)
+        recordRole(roleProduced(at: site), descriptor: descriptor)
         do { try finish(site, failure: selected); return descriptor } catch { cleanupDescriptor(descriptor, producingSite: site); throw error }
     }
     func status(descriptor: Int32, site: StateSyscallSite) throws -> stat { try call(site) { try SystemStateFileSystemOperations().status(descriptor: descriptor, site: site) } }
     func chmod(descriptor: Int32, mode: mode_t, site: StateSyscallSite) throws { try call(site) { try SystemStateFileSystemOperations().chmod(descriptor: descriptor, mode: mode, site: site) } }
-    func sync(descriptor: Int32, site: StateSyscallSite) throws { try call(site) { try SystemStateFileSystemOperations().sync(descriptor: descriptor, site: site) } }
+    func sync(descriptor: Int32, site: StateSyscallSite) throws {
+        let selected = try begin(site)
+        try SystemStateFileSystemOperations().sync(descriptor: descriptor, site: site)
+        let role = lock.withLock { descriptorRoles[descriptor] ?? .untracked }
+        lock.withLock { syncEvents.append(.init(site: site, role: role)) }
+        try finish(site, failure: selected)
+    }
     func close(descriptor: Int32, site: StateSyscallSite) throws {
         let selected = try begin(site)
         try SystemStateFileSystemOperations().close(descriptor: descriptor, site: site)
-        if recycleClosedDescriptor, selected?.succeededBeforeFailure == true {
+        removeRole(descriptor)
+        let opaqueFailure = isOpaqueDispatchedClose(site)
+        if recycleClosedDescriptor,
+           selected?.succeededBeforeFailure == true || opaqueFailure {
             try recycleDescriptor(descriptor)
         }
+        if opaqueFailure { throw ProjectStateError.stateUnavailable }
         try finish(site, failure: selected)
     }
     func lock(descriptor: Int32, operation: Int32, site: StateSyscallSite) throws {
@@ -446,10 +493,12 @@ final class ScriptedStateFileSystemOperations: StateFileSystemOperations, @unche
     }
     func duplicate(descriptor: Int32, site: StateSyscallSite) throws -> Int32 {
         let selected = try begin(site); let result = try SystemStateFileSystemOperations().duplicate(descriptor: descriptor, site: site)
+        recordRole(.scannerEnumeration, descriptor: result)
         do { try finish(site, failure: selected); return result } catch { cleanupDescriptor(result, producingSite: site); throw error }
     }
     func openDirectoryStream(descriptor: Int32, site: StateSyscallSite) throws -> StateDirectoryStream {
         let selected = try begin(site); let stream = try SystemStateFileSystemOperations().openDirectoryStream(descriptor: descriptor, site: site)
+        removeRole(descriptor)
         do { try finish(site, failure: selected); return stream } catch {
             lock.withLock { events.append(.closeStagingDirectoryStream) }
             if (try? SystemStateFileSystemOperations().closeDirectoryStream(stream, site: .closeStagingDirectoryStream)) != nil {
@@ -459,7 +508,21 @@ final class ScriptedStateFileSystemOperations: StateFileSystemOperations, @unche
         }
     }
     func readDirectoryEntry(_ stream: StateDirectoryStream, site: StateSyscallSite) throws -> [UInt8]? { try call(site) { try SystemStateFileSystemOperations().readDirectoryEntry(stream, site: site) } }
-    func closeDirectoryStream(_ stream: StateDirectoryStream, site: StateSyscallSite) throws { try call(site) { try SystemStateFileSystemOperations().closeDirectoryStream(stream, site: site) } }
+    func closeDirectoryStream(_ stream: StateDirectoryStream, site: StateSyscallSite) throws {
+        let identifier = ObjectIdentifier(stream)
+        if lock.withLock({ opaqueClosedStreams.contains(identifier) }) {
+            _ = try begin(site)
+            lock.withLock { opaqueDirectoryStreamWasRetried = true }
+            throw ProjectStateError.stateUnavailable
+        }
+        let selected = try begin(site)
+        try SystemStateFileSystemOperations().closeDirectoryStream(stream, site: site)
+        if isOpaqueDispatchedClose(site) {
+            lock.withLock { _ = opaqueClosedStreams.insert(identifier) }
+            throw ProjectStateError.stateUnavailable
+        }
+        try finish(site, failure: selected)
+    }
     func read(descriptor: Int32, count: Int, site: StateSyscallSite) throws -> Data { try call(site) { try SystemStateFileSystemOperations().read(descriptor: descriptor, count: count, site: site) } }
     func write(descriptor: Int32, data: Data, site: StateSyscallSite) throws { try call(site) { try SystemStateFileSystemOperations().write(descriptor: descriptor, data: data, site: site) } }
     func unlink(directory: Int32, name: String, site: StateSyscallSite) throws { try call(site) { try SystemStateFileSystemOperations().unlink(directory: directory, name: name, site: site) } }
@@ -480,12 +543,40 @@ final class ScriptedStateFileSystemOperations: StateFileSystemOperations, @unche
         }
         lock.withLock { events.append(cleanupSite) }
         if (try? SystemStateFileSystemOperations().close(descriptor: descriptor, site: cleanupSite)) != nil {
+            removeRole(descriptor)
             recordCleanup(producer: producingSite, cleanup: cleanupSite)
         }
     }
 
     private func recordCleanup(producer: StateSyscallSite, cleanup: StateSyscallSite) {
         lock.withLock { producerCleanups.append(.init(producer: producer, cleanup: cleanup)) }
+    }
+
+    private func isOpaqueDispatchedClose(_ site: StateSyscallSite) -> Bool {
+        lock.withLock {
+            site == opaqueDispatchedCloseSite
+                && siteCounts[site] == opaqueDispatchedCloseOccurrence
+        }
+    }
+
+    private func roleProduced(at site: StateSyscallSite) -> ScriptedStateDescriptorRole {
+        switch site {
+        case .openSharedDirectory: return .sharedDirectory
+        case .openScannerDirectory: return .scannerDirectory
+        case .createLockFile, .openExistingLockFile: return .transactionLock
+        case .openStagingEntry: return .recoveredStagingFile
+        case .openStateFileForRead: return .stateFile
+        case .createStagingFile: return .stagingFile
+        default: return .untracked
+        }
+    }
+
+    private func recordRole(_ role: ScriptedStateDescriptorRole, descriptor: Int32) {
+        lock.withLock { descriptorRoles[descriptor] = role }
+    }
+
+    private func removeRole(_ descriptor: Int32) {
+        _ = lock.withLock { descriptorRoles.removeValue(forKey: descriptor) }
     }
 
     private func markAcquiredCleanupFailureIfNeeded() {
@@ -575,14 +666,30 @@ enum ScriptedBackupMutation: Sendable { case none, renameAfterReference, replace
 final class ScriptedBackupExclusionOperations: BackupExclusionOperations, @unchecked Sendable {
     private let lock = NSLock()
     private let failingSite: BackupResourceSite?
+    private let failureOccurrence: Int
     private let mutation: ScriptedBackupMutation
     private var events: [BackupResourceSite] = []
+    private var siteCounts: [BackupResourceSite: Int] = [:]
 
-    init(failingSite: BackupResourceSite? = nil, mutation: ScriptedBackupMutation = .none) { self.failingSite = failingSite; self.mutation = mutation }
+    init(
+        failingSite: BackupResourceSite? = nil,
+        failureOccurrence: Int = 1,
+        mutation: ScriptedBackupMutation = .none
+    ) {
+        self.failingSite = failingSite
+        self.failureOccurrence = failureOccurrence
+        self.mutation = mutation
+    }
 
     private func visit(_ site: BackupResourceSite) throws {
-        lock.withLock { events.append(site) }
-        if site == failingSite { throw ProjectStateError.backupExclusionFailed }
+        let occurrence = lock.withLock { () -> Int in
+            events.append(site)
+            siteCounts[site, default: 0] += 1
+            return siteCounts[site]!
+        }
+        if site == failingSite, occurrence == failureOccurrence {
+            throw ProjectStateError.backupExclusionFailed
+        }
     }
 
     func snapshot() -> [BackupResourceSite] { lock.withLock { events } }
@@ -622,6 +729,7 @@ final class StateStoreFixture {
     let coordinator: ProjectKeyCoordinator
     let lease: ProjectKeyLease
     let bookmark: ProjectBookmark
+    let uuid: ScriptedUUID
     let store: ProjectStateStore
 
     var stateDirectory: URL { parentURL.appendingPathComponent("Pearcleaner/ProjectScanner", isDirectory: true) }
@@ -652,10 +760,11 @@ final class StateStoreFixture {
         let lease = ProjectKeyLease.persistent(material)
         let stagingUUID = UUID(uuidString: "22222222-2222-4222-8222-222222222222")!
         let uuids = [projectUUID, stagingUUID] + (0..<80).map { _ in UUID() }
+        let uuid = ScriptedUUID(uuids)
         let store = try await ProjectStateStore(
             parent: parent,
             keyCoordinator: coordinator,
-            uuid: ScriptedUUID(uuids),
+            uuid: uuid,
             operations: operations,
             backupOperations: backupOperations
         )
@@ -663,19 +772,22 @@ final class StateStoreFixture {
             parentURL: parentURL, selectedRoot: selected, outsideCanary: outside,
             projectUUID: projectUUID, stagingUUID: stagingUUID, generation: generation,
             parent: parent, coordinator: coordinator, lease: lease,
-            bookmark: ProjectBookmarkPersistence.decode(testBookmarkBytes(payload: Data((selected.path + "\0" + PrivacyCanaries.path).utf8))), store: store
+            bookmark: ProjectBookmarkPersistence.decode(testBookmarkBytes(payload: Data((selected.path + "\0" + PrivacyCanaries.path).utf8))),
+            uuid: uuid,
+            store: store
         )
     }
 
     private init(parentURL: URL, selectedRoot: URL, outsideCanary: URL, projectUUID: UUID,
                  stagingUUID: UUID, generation: UUID, parent: PrivateStateParentCapability,
                  coordinator: ProjectKeyCoordinator, lease: ProjectKeyLease,
-                 bookmark: ProjectBookmark, store: ProjectStateStore) {
+                 bookmark: ProjectBookmark, uuid: ScriptedUUID,
+                 store: ProjectStateStore) {
         self.parentURL = parentURL; self.selectedRoot = selectedRoot; self.outsideCanary = outsideCanary
         outsideSnapshot = (try? Data(contentsOf: outsideCanary)) ?? Data()
         self.projectUUID = projectUUID; self.stagingUUID = stagingUUID; self.generation = generation
         self.parent = parent; self.coordinator = coordinator; self.lease = lease
-        self.bookmark = bookmark; self.store = store
+        self.bookmark = bookmark; self.uuid = uuid; self.store = store
     }
 
     func register(label: String? = nil, overrides: ScanLimitOverrides = .init()) async throws -> ProjectRegistration {

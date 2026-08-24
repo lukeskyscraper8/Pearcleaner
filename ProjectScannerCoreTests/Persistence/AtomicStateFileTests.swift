@@ -55,6 +55,18 @@ final class AtomicStateFileTests: XCTestCase {
         let events = operations.snapshot()
         XCTAssertLessThan(try XCTUnwrap(events.firstIndex(of: .syncNewSharedDirectory)), try XCTUnwrap(events.firstIndex(of: .syncParentAfterSharedDirectory)))
         XCTAssertLessThan(try XCTUnwrap(events.firstIndex(of: .syncNewScannerDirectory)), try XCTUnwrap(events.firstIndex(of: .syncSharedAfterScannerDirectory)))
+        XCTAssertEqual(
+            operations.syncSnapshot(),
+            [
+                .init(site: .syncNewSharedDirectory, role: .sharedDirectory),
+                .init(site: .syncParentAfterSharedDirectory, role: .privateStateParent),
+                .init(site: .syncNewScannerDirectory, role: .scannerDirectory),
+                .init(site: .syncSharedAfterScannerDirectory, role: .sharedDirectory),
+                .init(site: .syncNewLockFile, role: .transactionLock),
+                .init(site: .syncScannerAfterLockFile, role: .scannerDirectory),
+            ],
+            "Fresh initialization must fsync each actual produced descriptor in durability order"
+        )
     }
 
     func testFirstUseFsyncsNewLockFileBeforeScannerDirectory() async throws {

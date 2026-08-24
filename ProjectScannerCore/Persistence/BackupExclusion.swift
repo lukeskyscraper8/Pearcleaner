@@ -79,14 +79,23 @@ enum BackupExclusion {
             }
 
             let first = try operations.openReference(reference, site: .openInitialFileReference)
+            var firstCloseAttempted = false
             do {
                 let firstStatus = try state.status(descriptor: first, site: .statInitialBackupReference)
                 guard try operations.verifyIdentity(pinned, firstStatus, site: .verifyInitialFileReferenceIdentity) else {
                     throw ProjectStateError.backupExclusionFailed
                 }
+                firstCloseAttempted = true
                 try state.close(descriptor: first, site: .closeInitialBackupReference)
             } catch {
-                closeAfterFailure(first, site: .closeInitialBackupReference, state: state, original: error)
+                if firstCloseAttempted {
+                    closeAfterFailedAttempt(
+                        first, site: .closeInitialBackupReference,
+                        error: error
+                    )
+                } else {
+                    closeAfterFailure(first, site: .closeInitialBackupReference, state: state)
+                }
                 throw error
             }
 
@@ -97,14 +106,23 @@ enum BackupExclusion {
             }
 
             let final = try operations.openReference(reference, site: .reopenAndVerifyFinalIdentity)
+            var finalCloseAttempted = false
             do {
                 let finalStatus = try state.status(descriptor: final, site: .statFinalBackupReference)
                 guard try operations.verifyIdentity(pinned, finalStatus, site: .reopenAndVerifyFinalIdentity) else {
                     throw ProjectStateError.backupExclusionFailed
                 }
+                finalCloseAttempted = true
                 try state.close(descriptor: final, site: .closeFinalBackupReference)
             } catch {
-                closeAfterFailure(final, site: .closeFinalBackupReference, state: state, original: error)
+                if finalCloseAttempted {
+                    closeAfterFailedAttempt(
+                        final, site: .closeFinalBackupReference,
+                        error: error
+                    )
+                } else {
+                    closeAfterFailure(final, site: .closeFinalBackupReference, state: state)
+                }
                 throw error
             }
         } catch let error as ProjectStateError {
@@ -119,19 +137,19 @@ enum BackupExclusion {
     private static func closeAfterFailure(
         _ descriptor: Int32,
         site: StateSyscallSite,
-        state: any StateFileSystemOperations,
-        original: Error
+        state: any StateFileSystemOperations
     ) {
-        if case StateOperationError.failedBefore(let failedSite, _) = original,
-           failedSite == site {
-            try? SystemStateFileSystemOperations().close(descriptor: descriptor, site: site)
-            return
-        }
-        if case StateOperationError.failedAfterSuccess(let failedSite, _) = original,
-           failedSite == site { return }
-        if case StateOperationError.stoppedAfterSuccess(let failedSite) = original,
-           failedSite == site { return }
-        try? state.close(descriptor: descriptor, site: site)
+        do { try state.close(descriptor: descriptor, site: site) }
+        catch { closeAfterFailedAttempt(descriptor, site: site, error: error) }
+    }
+
+    private static func closeAfterFailedAttempt(
+        _ descriptor: Int32,
+        site: StateSyscallSite,
+        error: Error
+    ) {
+        guard stateCloseFailedBeforeDispatch(error, at: site) else { return }
+        try? SystemStateFileSystemOperations().close(descriptor: descriptor, site: site)
     }
 }
 

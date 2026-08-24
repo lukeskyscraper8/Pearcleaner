@@ -75,5 +75,53 @@ final class BackupExclusionTests: XCTestCase {
                 XCTAssertEqual(error as? ProjectStateError, .backupExclusionFailed)
             }
         }
+
+        let container = FileManager.default.temporaryDirectory
+            .appendingPathComponent("backup-final-identity-\(UUID())")
+        let root = container.appendingPathComponent("pinned")
+        let outside = container.appendingPathComponent("outside")
+        let outsideSnapshot = Data("outside-final-identity-unchanged".utf8)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        try outsideSnapshot.write(to: outside)
+        defer { try? FileManager.default.removeItem(at: container) }
+        let descriptor = Darwin.open(
+            root.path,
+            O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC
+        )
+        XCTAssertGreaterThanOrEqual(descriptor, 0)
+        guard descriptor >= 0 else { return }
+        defer { Darwin.close(descriptor) }
+        let operations = ScriptedBackupExclusionOperations(
+            failingSite: .reopenAndVerifyFinalIdentity,
+            failureOccurrence: 2
+        )
+        let descriptorsBefore = backupOpenDescriptorCount()
+        XCTAssertThrowsError(try BackupExclusion.apply(
+            pinnedDirectory: descriptor,
+            state: SystemStateFileSystemOperations(),
+            operations: operations
+        )) {
+            XCTAssertEqual($0 as? ProjectStateError, .backupExclusionFailed)
+        }
+        XCTAssertEqual(
+            operations.snapshot().filter { $0 == .reopenAndVerifyFinalIdentity }.count,
+            2,
+            "The injected failure must reach final identity verification, not final reopen"
+        )
+        XCTAssertEqual(
+            backupOpenDescriptorCount(),
+            descriptorsBefore,
+            "Final identity verification failure leaked its reopened descriptor"
+        )
+        XCTAssertEqual(try Data(contentsOf: outside), outsideSnapshot)
+    }
+}
+
+private func backupOpenDescriptorCount() -> Int {
+    (0..<getdtablesize()).reduce(into: 0) { count, descriptor in
+        errno = 0
+        if fcntl(descriptor, F_GETFD) != -1 || errno != EBADF {
+            count += 1
+        }
     }
 }

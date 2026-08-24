@@ -195,7 +195,7 @@ final class ProjectStateTransactionLock: @unchecked Sendable {
         guard current >= 0 else { return }
         do { try operations.close(descriptor: current, site: .closeLockFile) }
         catch {
-            if !lockCloseSucceeded(error) {
+            if stateCloseFailedBeforeDispatch(error, at: .closeLockFile) {
                 try? SystemStateFileSystemOperations().close(
                     descriptor: current, site: .closeLockFile
                 )
@@ -249,22 +249,12 @@ private func closeLockDescriptor(
        site == .createLockFile || site == .openExistingLockFile { return }
     do { try operations.close(descriptor: descriptor, site: .closeLockFile) }
     catch {
-        if !lockCloseSucceeded(error) {
+        if stateCloseFailedBeforeDispatch(error, at: .closeLockFile) {
             try? SystemStateFileSystemOperations().close(
                 descriptor: descriptor, site: .closeLockFile
             )
         }
     }
-}
-
-private func lockCloseSucceeded(_ error: Error) -> Bool {
-    if case StateOperationError.failedAfterSuccess(let site, _) = error {
-        return site == .closeLockFile
-    }
-    if case StateOperationError.stoppedAfterSuccess(let site) = error {
-        return site == .closeLockFile
-    }
-    return false
 }
 
 private func isIdentityFailure(_ error: Error) -> Bool { error is LockIdentityError }

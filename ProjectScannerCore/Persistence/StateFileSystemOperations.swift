@@ -36,8 +36,29 @@ enum StateOperationError: Error, Sendable, Equatable {
 }
 
 final class StateDirectoryStream: @unchecked Sendable {
-    fileprivate let pointer: UnsafeMutablePointer<DIR>
-    fileprivate init(_ pointer: UnsafeMutablePointer<DIR>) { self.pointer = pointer }
+    private let lock = NSLock()
+    private var pointer: UnsafeMutablePointer<DIR>?
+
+    fileprivate init(_ pointer: UnsafeMutablePointer<DIR>) {
+        self.pointer = pointer
+    }
+
+    fileprivate func withPointer<Value>(
+        _ body: (UnsafeMutablePointer<DIR>) throws -> Value
+    ) throws -> Value {
+        try lock.withLock {
+            guard let pointer else { throw ProjectStateError.stateUnavailable }
+            return try body(pointer)
+        }
+    }
+
+    fileprivate func takeForClose() throws -> UnsafeMutablePointer<DIR> {
+        try lock.withLock {
+            guard let pointer else { throw ProjectStateError.stateUnavailable }
+            self.pointer = nil
+            return pointer
+        }
+    }
 }
 
 protocol StateFileSystemOperations: Sendable {
@@ -113,10 +134,21 @@ struct SystemStateFileSystemOperations: StateFileSystemOperations {
     }
     func openDirectoryStream(descriptor: Int32, site: StateSyscallSite) throws -> StateDirectoryStream { guard let pointer = fdopendir(descriptor) else { throw ProjectStateError.stateUnavailable }; return StateDirectoryStream(pointer) }
     func readDirectoryEntry(_ stream: StateDirectoryStream, site: StateSyscallSite) throws -> [UInt8]? {
-        errno = 0; guard let entry = readdir(stream.pointer) else { if errno != 0 { throw ProjectStateError.stateUnavailable }; return nil }
-        return withUnsafeBytes(of: &entry.pointee.d_name) { raw in Array(raw.prefix { $0 != 0 }) }
+        try stream.withPointer { pointer in
+            errno = 0
+            guard let entry = readdir(pointer) else {
+                if errno != 0 { throw ProjectStateError.stateUnavailable }
+                return nil
+            }
+            return withUnsafeBytes(of: &entry.pointee.d_name) { raw in
+                Array(raw.prefix { $0 != 0 })
+            }
+        }
     }
-    func closeDirectoryStream(_ stream: StateDirectoryStream, site: StateSyscallSite) throws { guard closedir(stream.pointer) == 0 else { throw ProjectStateError.stateUnavailable } }
+    func closeDirectoryStream(_ stream: StateDirectoryStream, site: StateSyscallSite) throws {
+        let pointer = try stream.takeForClose()
+        guard closedir(pointer) == 0 else { throw ProjectStateError.stateUnavailable }
+    }
     func read(descriptor: Int32, count: Int, site: StateSyscallSite) throws -> Data {
         var data = Data(count: count); var offset = 0
         while offset < count { let amount = data.withUnsafeMutableBytes { Darwin.read(descriptor, $0.baseAddress!.advanced(by: offset), count - offset) }; if amount < 0 && errno == EINTR { continue }; guard amount > 0 else { throw ProjectStateError.invalidState }; offset += amount }
@@ -132,4 +164,11 @@ struct SystemStateFileSystemOperations: StateFileSystemOperations {
     func rename(directory: Int32, from: String, to: String, site: StateSyscallSite) throws {
         while from.withCString({ a in to.withCString { b in renameat(directory, a, directory, b) } }) != 0 { if errno != EINTR { throw ProjectStateError.stateUnavailable } }
     }
+}
+
+func stateCloseFailedBeforeDispatch(_ error: Error, at site: StateSyscallSite) -> Bool {
+    if case StateOperationError.failedBefore(let failedSite, _) = error {
+        return failedSite == site
+    }
+    return false
 }

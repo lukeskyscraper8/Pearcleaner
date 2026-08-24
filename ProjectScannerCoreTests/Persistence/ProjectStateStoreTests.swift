@@ -239,6 +239,55 @@ final class ProjectStateStoreTests: XCTestCase {
             }
         }
 
+        for site in [
+            StateSyscallSite.createStagingFile,
+            .chmodStagingFile,
+            .statStagingFile,
+            .writeStagingFile,
+            .syncStagingFile,
+            .closeStagingFileBeforeRename,
+        ] {
+            let operations = ScriptedStateFileSystemOperations(
+                failingSite: site,
+                failure: .failAfterSuccess(EIO)
+            )
+            let writer = try await ProjectStateStore(
+                parent: baseline.parent,
+                keyCoordinator: baseline.coordinator,
+                uuid: ScriptedUUID([UUID()]),
+                operations: operations,
+                backupOperations: SystemBackupExclusionOperations()
+            )
+            await XCTAssertThrowsProjectState(.stateUnavailable) {
+                _ = try await writer.recordAttempt(
+                    projectID: registration.projectID,
+                    coverage: nonCompleteCoverage(.partial),
+                    finishedAt: Date(timeIntervalSince1970: 4),
+                    metadata: try AttemptSummaryMetadata(
+                        advisoryCacheSchemaVersion: nil,
+                        advisory: nil
+                    ),
+                    lease: baseline.lease
+                )
+            }
+            assertInjectedFailureOrdering(site, events: operations.snapshot())
+            XCTAssertEqual(
+                try Data(contentsOf: baseline.stateFile),
+                priorBytes,
+                "Fail-after precommit site changed the prior envelope: \(site)"
+            )
+            XCTAssertFalse(
+                try FileManager.default.contentsOfDirectory(
+                    atPath: baseline.stateDirectory.path
+                ).contains(where: { $0.hasPrefix(".state-") && $0.hasSuffix(".tmp") }),
+                "Fail-after precommit site left staging behind: \(site)"
+            )
+            XCTAssertEqual(
+                try Data(contentsOf: baseline.outsideCanary),
+                baseline.outsideSnapshot
+            )
+        }
+
         let collisionInspection = ScriptedStateFileSystemOperations(failingSite: .inspectRegistrationDestination, failure: .failBefore(EIO))
         let registrationWriter = try await ProjectStateStore(parent: baseline.parent, keyCoordinator: baseline.coordinator, uuid: ScriptedUUID([UUID(), UUID()]), operations: collisionInspection, backupOperations: SystemBackupExclusionOperations())
         do { _ = try await registrationWriter.register(label: nil, bookmark: baseline.bookmark, limitOverrides: .init(), lease: baseline.lease); XCTFail("Registration destination inspection was skipped") }
@@ -299,16 +348,82 @@ final class ProjectStateStoreTests: XCTestCase {
             XCTAssertTrue(cleanupOps.snapshot().contains(.closeStagingFileAfterFailure))
         }
 
-        let operations = ScriptedStateFileSystemOperations(failingSite: .releaseTransactionLock, failure: .failAfterSuccess(EIO), failureOccurrence: 2)
-            let writer = try await ProjectStateStore(parent: baseline.parent, keyCoordinator: baseline.coordinator, uuid: ScriptedUUID([UUID()]), operations: operations, backupOperations: SystemBackupExclusionOperations())
-            let commit = try await writer.recordAttempt(projectID: registration.projectID, coverage: nonCompleteCoverage(.unavailable), finishedAt: Date(timeIntervalSince1970: 7), metadata: try AttemptSummaryMetadata(advisoryCacheSchemaVersion: nil, advisory: nil), lease: baseline.lease)
+        for failure in [
+            ScriptedStateFailure.failBefore(EIO),
+            .failAfterSuccess(EIO),
+        ] {
+            let operations = ScriptedStateFileSystemOperations(
+                failingSite: .releaseTransactionLock,
+                failure: failure,
+                failureOccurrence: 2
+            )
+            let writer = try await ProjectStateStore(
+                parent: baseline.parent,
+                keyCoordinator: baseline.coordinator,
+                uuid: ScriptedUUID([UUID()]),
+                operations: operations,
+                backupOperations: SystemBackupExclusionOperations()
+            )
+            let commit = try await writer.recordAttempt(
+                projectID: registration.projectID,
+                coverage: nonCompleteCoverage(.unavailable),
+                finishedAt: Date(timeIntervalSince1970: 7),
+                metadata: try AttemptSummaryMetadata(
+                    advisoryCacheSchemaVersion: nil,
+                    advisory: nil
+                ),
+                lease: baseline.lease
+            )
             XCTAssertEqual(commit, .committedDurabilityUncertain)
-            XCTAssertTrue(operations.snapshot().contains(.closeLockFile), "Release failure did not retire the lock descriptor")
-            await XCTAssertThrowsProjectState(.stateUnavailable) { _ = try await writer.recordAttempt(projectID: registration.projectID, coverage: nonCompleteCoverage(.partial), finishedAt: Date(timeIntervalSince1970: 8), metadata: try AttemptSummaryMetadata(advisoryCacheSchemaVersion: nil, advisory: nil), lease: baseline.lease) }
+            let events = operations.snapshot()
+            XCTAssertEqual(
+                events.filter { $0 == .releaseTransactionLock }.count,
+                2,
+                "Release failure must occur in the mutation, after initialization"
+            )
+            XCTAssertTrue(
+                events.contains(.closeLockFile),
+                "Release failure did not retire the lock descriptor"
+            )
+
+            let retryStart = ContinuousClock.now
+            await XCTAssertThrowsProjectState(.stateUnavailable) {
+                _ = try await writer.recordAttempt(
+                    projectID: registration.projectID,
+                    coverage: nonCompleteCoverage(.partial),
+                    finishedAt: Date(timeIntervalSince1970: 8),
+                    metadata: try AttemptSummaryMetadata(
+                        advisoryCacheSchemaVersion: nil,
+                        advisory: nil
+                    ),
+                    lease: baseline.lease
+                )
+            }
+            XCTAssertLessThan(
+                retryStart.duration(to: .now),
+                .milliseconds(500),
+                "Release failure leaked the process gate"
+            )
+
+            let lockFD = Darwin.open(
+                baseline.stateDirectory.appendingPathComponent(".state.lock").path,
+                O_RDWR | O_NONBLOCK | O_NOFOLLOW | O_CLOEXEC
+            )
+            XCTAssertGreaterThanOrEqual(lockFD, 0)
+            if lockFD >= 0 {
+                XCTAssertEqual(
+                    flock(lockFD, LOCK_EX | LOCK_NB),
+                    0,
+                    "Release failure left kernel lock ownership behind"
+                )
+                _ = flock(lockFD, LOCK_UN)
+                _ = Darwin.close(lockFD)
+            }
+        }
 
         try assertCleanupOnlySites()
         try assertProducerCleanupMappings()
-        try assertKnownSuccessfulCloseIsNotRetried()
+        try await assertKnownSuccessfulCloseIsNotRetried()
     }
 
     func testCorruptOversizedOrUnknownSchemaStateFailsClosed() async throws {
@@ -509,18 +624,31 @@ final class ProjectStateStoreTests: XCTestCase {
         let fixture = try await StateStoreFixture.make(projectUUID: expected); defer { fixture.remove() }
         let registration = try await fixture.register()
         XCTAssertEqual(registration.projectID.rawValue, expected)
+        XCTAssertEqual(
+            fixture.uuid.snapshotCallCount(),
+            2,
+            "Registration must consume exactly one project identifier and one staging identifier"
+        )
         XCTAssertTrue(FileManager.default.fileExists(atPath: fixture.stateDirectory.appendingPathComponent("project-\(expected.uuidString.lowercased()).json").path))
         let prior = try Data(contentsOf: fixture.stateFile)
-        let collisionStore = try await ProjectStateStore(parent: fixture.parent, keyCoordinator: fixture.coordinator, uuid: ScriptedUUID([expected, UUID()]), operations: SystemStateFileSystemOperations(), backupOperations: SystemBackupExclusionOperations())
+        let collisionUUID = ScriptedUUID([expected])
+        let collisionStore = try await ProjectStateStore(parent: fixture.parent, keyCoordinator: fixture.coordinator, uuid: collisionUUID, operations: SystemStateFileSystemOperations(), backupOperations: SystemBackupExclusionOperations())
         await XCTAssertThrowsProjectState(.identifierCollision) { _ = try await collisionStore.register(label: nil, bookmark: fixture.bookmark, limitOverrides: .init(), lease: fixture.lease) }
+        XCTAssertEqual(
+            collisionUUID.snapshotCallCount(),
+            1,
+            "Collision rejection must happen before requesting a staging identifier"
+        )
         XCTAssertEqual(try Data(contentsOf: fixture.stateFile), prior)
         XCTAssertFalse(try FileManager.default.contentsOfDirectory(atPath: fixture.stateDirectory.path).contains(where: { $0.hasSuffix(".tmp") }))
 
         let symlinkID = UUID(uuidString: "abcdef01-2345-4678-8abc-def012345678")!
         let symlinkDestination = fixture.stateDirectory.appendingPathComponent("project-\(symlinkID.uuidString.lowercased()).json")
         try FileManager.default.createSymbolicLink(at: symlinkDestination, withDestinationURL: fixture.outsideCanary)
-        let symlinkStore = try await ProjectStateStore(parent: fixture.parent, keyCoordinator: fixture.coordinator, uuid: ScriptedUUID([symlinkID, UUID()]), operations: SystemStateFileSystemOperations(), backupOperations: SystemBackupExclusionOperations())
+        let symlinkUUID = ScriptedUUID([symlinkID])
+        let symlinkStore = try await ProjectStateStore(parent: fixture.parent, keyCoordinator: fixture.coordinator, uuid: symlinkUUID, operations: SystemStateFileSystemOperations(), backupOperations: SystemBackupExclusionOperations())
         await XCTAssertThrowsProjectState(.identifierCollision) { _ = try await symlinkStore.register(label: nil, bookmark: fixture.bookmark, limitOverrides: .init(), lease: fixture.lease) }
+        XCTAssertEqual(symlinkUUID.snapshotCallCount(), 1)
         var status = stat()
         XCTAssertEqual(lstat(symlinkDestination.path, &status), 0)
         XCTAssertEqual(status.st_mode & S_IFMT, S_IFLNK)
@@ -674,7 +802,7 @@ private func assertProducerCleanupMappings() throws {
     }
 }
 
-private func assertKnownSuccessfulCloseIsNotRetried() throws {
+private func assertKnownSuccessfulCloseIsNotRetried() async throws {
     let atomicRoot = FileManager.default.temporaryDirectory.appendingPathComponent("close-aba-atomic-\(UUID())")
     try FileManager.default.createDirectory(at: atomicRoot, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
     defer { try? FileManager.default.removeItem(at: atomicRoot) }
@@ -693,6 +821,190 @@ private func assertKnownSuccessfulCloseIsNotRetried() throws {
         XCTAssertTrue(
             operations.consumeRecycledDescriptorsWereOpen(),
             "Atomic close retried a descriptor already closed by \(outcome)"
+        )
+    }
+
+    let opaqueAtomicOperations = ScriptedStateFileSystemOperations(
+        recycleClosedDescriptor: true,
+        opaqueDispatchedCloseSite: .closeScannerDirectory
+    )
+    let opaqueAtomic = try AtomicStateFile.open(
+        parent: atomicParent, operations: opaqueAtomicOperations,
+        backupOperations: SystemBackupExclusionOperations()
+    )
+    opaqueAtomic.close()
+    XCTAssertEqual(
+        opaqueAtomicOperations.snapshot().filter { $0 == .closeScannerDirectory }.count,
+        1,
+        "An opaque error after close dispatch must not trigger a second close"
+    )
+    XCTAssertTrue(
+        opaqueAtomicOperations.consumeRecycledDescriptorsWereOpen(),
+        "Opaque close handling closed a descriptor recycled after dispatch"
+    )
+
+    for site in [StateSyscallSite.closeParentDirectory, .closeSharedDirectory] {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("close-aba-intermediate-\(site.rawValue)-\(UUID())")
+        try FileManager.default.createDirectory(
+            at: root, withIntermediateDirectories: true,
+            attributes: [.posixPermissions: 0o700]
+        )
+        defer { try? FileManager.default.removeItem(at: root) }
+        let parent = try PrivateStateParentCapability.open(applicationSupportURL: root)
+        defer { parent.close() }
+        let operations = ScriptedStateFileSystemOperations(
+            recycleClosedDescriptor: true,
+            opaqueDispatchedCloseSite: site
+        )
+        XCTAssertThrowsError(try AtomicStateFile.open(
+            parent: parent, operations: operations,
+            backupOperations: SystemBackupExclusionOperations()
+        ))
+        XCTAssertEqual(
+            operations.snapshot().filter { $0 == site }.count,
+            1,
+            "Intermediate directory close was dispatched more than once at \(site)"
+        )
+        XCTAssertTrue(
+            operations.consumeRecycledDescriptorsWereOpen(),
+            "Intermediate directory cleanup closed a recycled descriptor at \(site)"
+        )
+    }
+
+    for site in [
+        StateSyscallSite.closeInitialBackupReference,
+        .closeFinalBackupReference,
+    ] {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("close-aba-backup-\(site.rawValue)-\(UUID())")
+        try FileManager.default.createDirectory(
+            at: root, withIntermediateDirectories: true,
+            attributes: [.posixPermissions: 0o700]
+        )
+        defer { try? FileManager.default.removeItem(at: root) }
+        let parent = try PrivateStateParentCapability.open(applicationSupportURL: root)
+        defer { parent.close() }
+        let operations = ScriptedStateFileSystemOperations(
+            recycleClosedDescriptor: true,
+            opaqueDispatchedCloseSite: site
+        )
+        XCTAssertThrowsError(try AtomicStateFile.open(
+            parent: parent, operations: operations,
+            backupOperations: SystemBackupExclusionOperations()
+        ))
+        XCTAssertEqual(
+            operations.snapshot().filter { $0 == site }.count,
+            1,
+            "Backup reference close was dispatched more than once at \(site)"
+        )
+        XCTAssertTrue(
+            operations.consumeRecycledDescriptorsWereOpen(),
+            "Backup cleanup closed a recycled descriptor at \(site)"
+        )
+    }
+
+    let opaqueReadOperations = ScriptedStateFileSystemOperations(
+        recycleClosedDescriptor: true,
+        opaqueDispatchedCloseSite: .closeStateFileAfterRead
+    )
+    let opaqueReadAtomic = try AtomicStateFile.open(
+        parent: atomicParent, operations: opaqueReadOperations,
+        backupOperations: SystemBackupExclusionOperations()
+    )
+    let opaqueReadState = atomicRoot
+        .appendingPathComponent("Pearcleaner/ProjectScanner/opaque-read-close.json")
+    XCTAssertTrue(FileManager.default.createFile(
+        atPath: opaqueReadState.path, contents: Data("invalid".utf8),
+        attributes: [.posixPermissions: 0o644]
+    ))
+    XCTAssertThrowsError(try opaqueReadAtomic.read(name: opaqueReadState.lastPathComponent))
+    XCTAssertEqual(
+        opaqueReadOperations.snapshot().filter { $0 == .closeStateFileAfterRead }.count,
+        1,
+        "Read cleanup retried an opaque dispatched close"
+    )
+    XCTAssertTrue(
+        opaqueReadOperations.consumeRecycledDescriptorsWereOpen(),
+        "Read cleanup closed a descriptor recycled after opaque dispatch"
+    )
+    opaqueReadAtomic.close()
+
+    let opaqueStreamOperations = ScriptedStateFileSystemOperations(
+        opaqueDispatchedCloseSite: .closeStagingDirectoryStream
+    )
+    let opaqueStreamAtomic = try AtomicStateFile.open(
+        parent: atomicParent, operations: opaqueStreamOperations,
+        backupOperations: SystemBackupExclusionOperations()
+    )
+    XCTAssertThrowsError(try opaqueStreamAtomic.removeValidatedStagingFiles())
+    XCTAssertEqual(
+        opaqueStreamOperations.snapshot().filter { $0 == .closeStagingDirectoryStream }.count,
+        1,
+        "An opaque closedir outcome must consume the stream exactly once"
+    )
+    XCTAssertFalse(
+        opaqueStreamOperations.consumeOpaqueDirectoryStreamWasRetried(),
+        "Directory stream was reused after closedir was dispatched"
+    )
+    opaqueStreamAtomic.close()
+
+    let recoveredRoot = try StateMatrixRoot(kind: .staging)
+    defer { recoveredRoot.remove() }
+    let recoveredOperations = ScriptedStateFileSystemOperations(
+        recycleClosedDescriptor: true,
+        opaqueDispatchedCloseSite: .closeRecoveredStagingEntry
+    )
+    do {
+        _ = try await recoveredRoot.makeStore(operations: recoveredOperations)
+        XCTFail("Recovered staging close failure was ignored")
+    } catch {
+        XCTAssertEqual(error as? ProjectStateError, .stateUnavailable)
+    }
+    XCTAssertEqual(
+        recoveredOperations.snapshot().filter { $0 == .closeRecoveredStagingEntry }.count,
+        1,
+        "Recovered staging descriptor was closed more than once"
+    )
+    XCTAssertTrue(
+        recoveredOperations.consumeRecycledDescriptorsWereOpen(),
+        "Recovered staging cleanup closed a recycled descriptor"
+    )
+
+    for (primarySite, closeSite) in [
+        (StateSyscallSite.closeStagingFileBeforeRename, StateSyscallSite.closeStagingFileBeforeRename),
+        (.syncStagingFile, .closeStagingFileAfterFailure),
+    ] {
+        let operations = ScriptedStateFileSystemOperations(
+            failingSite: primarySite == closeSite ? nil : primarySite,
+            failure: primarySite == closeSite ? nil : .failBefore(EIO),
+            recycleClosedDescriptor: true,
+            opaqueDispatchedCloseSite: closeSite
+        )
+        let atomic = try AtomicStateFile.open(
+            parent: atomicParent, operations: operations,
+            backupOperations: SystemBackupExclusionOperations()
+        )
+        defer { atomic.close() }
+        let destination = "opaque-staging-\(UUID().uuidString.lowercased()).json"
+        XCTAssertThrowsError(try atomic.write(
+            data: Data("whole-envelope".utf8), destinationName: destination,
+            stagingUUID: UUID()
+        ))
+        XCTAssertEqual(
+            operations.snapshot().filter { $0 == closeSite }.count,
+            1,
+            "Staging descriptor close was dispatched more than once at \(closeSite)"
+        )
+        XCTAssertTrue(
+            operations.consumeRecycledDescriptorsWereOpen(),
+            "Staging cleanup closed a descriptor recycled after \(closeSite)"
+        )
+        XCTAssertFalse(
+            FileManager.default.fileExists(
+                atPath: atomicRoot
+                    .appendingPathComponent("Pearcleaner/ProjectScanner/\(destination)").path
+            )
         )
     }
 
@@ -740,6 +1052,77 @@ private func assertKnownSuccessfulCloseIsNotRetried() throws {
         XCTAssertTrue(
             operations.consumeRecycledDescriptorsWereOpen(),
             "Lock retirement retried a descriptor already closed by \(outcome)"
+        )
+    }
+
+    let opaqueLockRoot = FileManager.default.temporaryDirectory
+        .appendingPathComponent("close-aba-opaque-lock-\(UUID())")
+    try FileManager.default.createDirectory(
+        at: opaqueLockRoot, withIntermediateDirectories: true,
+        attributes: [.posixPermissions: 0o700]
+    )
+    defer { try? FileManager.default.removeItem(at: opaqueLockRoot) }
+    let opaqueLockDirectory = Darwin.open(
+        opaqueLockRoot.path,
+        O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC
+    )
+    XCTAssertGreaterThanOrEqual(opaqueLockDirectory, 0)
+    if opaqueLockDirectory >= 0 {
+        defer { Darwin.close(opaqueLockDirectory) }
+        let opaqueLockOperations = ScriptedStateFileSystemOperations(
+            recycleClosedDescriptor: true,
+            opaqueDispatchedCloseSite: .closeLockFile
+        )
+        let opaqueTransactionLock = try ProjectStateTransactionLock.open(
+            directoryDescriptor: opaqueLockDirectory,
+            operations: opaqueLockOperations
+        )
+        opaqueTransactionLock.close()
+        XCTAssertEqual(
+            opaqueLockOperations.snapshot().filter { $0 == .closeLockFile }.count,
+            1,
+            "Lock retirement retried an opaque dispatched close"
+        )
+        XCTAssertTrue(
+            opaqueLockOperations.consumeRecycledDescriptorsWereOpen(),
+            "Lock retirement closed a descriptor recycled after opaque dispatch"
+        )
+    }
+
+    let opaqueInvalidLockRoot = FileManager.default.temporaryDirectory
+        .appendingPathComponent("close-aba-opaque-invalid-lock-\(UUID())")
+    try FileManager.default.createDirectory(
+        at: opaqueInvalidLockRoot, withIntermediateDirectories: true,
+        attributes: [.posixPermissions: 0o700]
+    )
+    defer { try? FileManager.default.removeItem(at: opaqueInvalidLockRoot) }
+    XCTAssertTrue(FileManager.default.createFile(
+        atPath: opaqueInvalidLockRoot.appendingPathComponent(".state.lock").path,
+        contents: Data(), attributes: [.posixPermissions: 0o644]
+    ))
+    let opaqueInvalidLockDirectory = Darwin.open(
+        opaqueInvalidLockRoot.path,
+        O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC
+    )
+    XCTAssertGreaterThanOrEqual(opaqueInvalidLockDirectory, 0)
+    if opaqueInvalidLockDirectory >= 0 {
+        defer { Darwin.close(opaqueInvalidLockDirectory) }
+        let operations = ScriptedStateFileSystemOperations(
+            recycleClosedDescriptor: true,
+            opaqueDispatchedCloseSite: .closeLockFile
+        )
+        XCTAssertThrowsError(try ProjectStateTransactionLock.open(
+            directoryDescriptor: opaqueInvalidLockDirectory,
+            operations: operations
+        ))
+        XCTAssertEqual(
+            operations.snapshot().filter { $0 == .closeLockFile }.count,
+            1,
+            "Invalid-lock cleanup dispatched close more than once"
+        )
+        XCTAssertTrue(
+            operations.consumeRecycledDescriptorsWereOpen(),
+            "Invalid-lock cleanup closed a recycled descriptor"
         )
     }
 
