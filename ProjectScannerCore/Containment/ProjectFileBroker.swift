@@ -1813,7 +1813,11 @@ fileprivate func readRetryingInterrupts(
 }
 
 fileprivate func splitLinkTarget(_ target: Data) -> [Data] {
-    target.split(separator: UInt8(ascii: "/"), omittingEmptySubsequences: false).map(Data.init)
+    let components: [ArraySlice<UInt8>] = target.split(
+        separator: UInt8(ascii: "/"),
+        omittingEmptySubsequences: false
+    )
+    return components.map(Data.init)
 }
 
 fileprivate func physicalPathByteCount(_ components: [Data]) -> UInt64 {
