@@ -5,6 +5,7 @@ public enum FeasibilityManifestSchema {
 }
 
 public enum GitRunnerVersion {
+    public static let current: String = GitRunnerInvocation.version
     public static let placeholder: String = "0.0.0-not-implemented"
 }
 

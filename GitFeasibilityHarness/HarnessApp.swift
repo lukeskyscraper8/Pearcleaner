@@ -10,7 +10,7 @@ struct FeasibilitySystemMetadata: Sendable {
     let architecture: String
     let testTimestamp: Date
 
-    static func collect(runnerVersion: String = GitRunnerVersion.placeholder) -> FeasibilitySystemMetadata {
+    static func collect(runnerVersion: String = GitRunnerVersion.current) -> FeasibilitySystemMetadata {
         FeasibilitySystemMetadata(
             pearcleanerVersion: Bundle.main.pearcleanerMarketingVersion,
             harnessVersion: Bundle.main.harnessMarketingVersion,

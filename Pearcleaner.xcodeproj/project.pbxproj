@@ -12,6 +12,7 @@
 		A30000000000000000000023 /* libGitEvidenceShared.a in Frameworks */ = {isa = PBXBuildFile; fileRef = A30000000000000000000001 /* libGitEvidenceShared.a */; };
 		A30000000000000000000024 /* GitEvidenceService.xpc in CopyFiles */ = {isa = PBXBuildFile; fileRef = A30000000000000000000012 /* GitEvidenceService.xpc */; settings = {ATTRIBUTES = (CodeSignOnCopy, RemoveHeadersOnCopy, ); }; };
 		A30000000000000000000025 /* GitRunner in CopyFiles */ = {isa = PBXBuildFile; fileRef = A30000000000000000000009 /* GitRunner */; settings = {ATTRIBUTES = (CodeSignOnCopy, ); }; };
+		A30000000000000000000031 /* libGitEvidenceShared.a in Frameworks */ = {isa = PBXBuildFile; fileRef = A30000000000000000000001 /* libGitEvidenceShared.a */; };
 		A20000000000000000000009 /* libProjectScannerCore.a in Frameworks */ = {isa = PBXBuildFile; fileRef = A20000000000000000000001 /* libProjectScannerCore.a */; };
 		A2000000000000000000000A /* libProjectScannerCore.a in Frameworks */ = {isa = PBXBuildFile; fileRef = A20000000000000000000001 /* libProjectScannerCore.a */; };
 		A20000000000000000000047 /* libProjectScannerCore.a in Frameworks */ = {isa = PBXBuildFile; fileRef = A20000000000000000000001 /* libProjectScannerCore.a */; };
@@ -121,6 +122,13 @@
 			proxyType = 1;
 			remoteGlobalIDString = A30000000000000000000011;
 			remoteInfo = GitRunner;
+		};
+		A30000000000000000000032 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = C77B8FF82AF18E2E009CC655 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = A30000000000000000000008;
+			remoteInfo = GitEvidenceShared;
 		};
 		A2000000000000000000004C /* PBXContainerItemProxy */ = {
 			isa = PBXContainerItemProxy;
@@ -392,6 +400,7 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				A30000000000000000000031 /* libGitEvidenceShared.a in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -833,6 +842,7 @@
 			buildRules = (
 			);
 			dependencies = (
+				A30000000000000000000033 /* PBXTargetDependency */,
 			);
 			fileSystemSynchronizedGroups = (
 				A3000000000000000000000A /* GitRunner */,
@@ -1187,6 +1197,11 @@
 			isa = PBXTargetDependency;
 			target = A30000000000000000000011 /* GitRunner */;
 			targetProxy = A3000000000000000000002C /* PBXContainerItemProxy */;
+		};
+		A30000000000000000000033 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = A30000000000000000000008 /* GitEvidenceShared */;
+			targetProxy = A30000000000000000000032 /* PBXContainerItemProxy */;
 		};
 		A2000000000000000000004E /* PBXTargetDependency */ = {
 			isa = PBXTargetDependency;
