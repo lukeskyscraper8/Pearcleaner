@@ -1,0 +1,15 @@
+{
+  "details" : {
+    "git_launch_path" : "\/usr\/bin\/git",
+    "metadata_read_succeeded" : "false",
+    "runner_sandbox_enforcement_expected" : "true",
+    "runner_version" : "1.0.0",
+    "sandbox_denial_verified" : "false",
+    "summary" : "Git transition scenario failed metadata preservation and\/or sandbox denial checks.",
+    "working_tree_read_denied" : "false"
+  },
+  "id" : "git_transition",
+  "passed" : false,
+  "sandboxLogPath" : "logs\/git_transition.log",
+  "status" : "failed"
+}

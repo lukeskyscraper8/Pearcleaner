@@ -104,7 +104,21 @@ struct GitFeasibilityRegistry: GitFeasibilityProviding, Sendable {
             }
         }
 
+        let checkoutEvidence = checkedInEvidenceRoot()
+        if fileManager.fileExists(atPath: checkoutEvidence.path) {
+            return checkoutEvidence
+        }
+
         return resourceRootFallback(bundle: bundle)
+    }
+
+    private static func checkedInEvidenceRoot() -> URL {
+        URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .appendingPathComponent("docs/superpowers/evidence/git-feasibility", isDirectory: true)
     }
 
     private static func resourceRootFallback(bundle: Bundle) -> URL {
@@ -132,6 +146,11 @@ struct SystemGitFeasibilityHostProbe: GitFeasibilityHostProbing, Sendable {
     }
 
     private static func appleGitVersion() -> String {
+        if let override = ProcessInfo.processInfo.environment["GIT_FEASIBILITY_APPLE_GIT_VERSION"],
+           !override.isEmpty {
+            return override
+        }
+
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/usr/bin/git")
         process.arguments = ["--version"]

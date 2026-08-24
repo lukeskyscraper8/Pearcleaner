@@ -233,6 +233,14 @@ enum GitTransitionScenarioSupport {
     }
 
     static func runnerSandboxEnforcementExpected(at runnerURL: URL) -> Bool {
+        if sandboxEntitlementPresent(at: runnerURL) {
+            return true
+        }
+
+        return productionSignedBinary(at: runnerURL)
+    }
+
+    private static func sandboxEntitlementPresent(at runnerURL: URL) -> Bool {
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/usr/bin/codesign")
         process.arguments = ["-d", "--entitlements", ":-", runnerURL.path]
@@ -262,6 +270,36 @@ enum GitTransitionScenarioSupport {
         }
 
         return (plist["com.apple.security.app-sandbox"] as? Bool) == true
+    }
+
+    private static func productionSignedBinary(at runnerURL: URL) -> Bool {
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/codesign")
+        process.arguments = ["-dv", "--verbose=2", runnerURL.path]
+
+        let pipe = Pipe()
+        process.standardOutput = pipe
+        process.standardError = pipe
+
+        do {
+            try process.run()
+        } catch {
+            return false
+        }
+
+        process.waitUntilExit()
+        guard process.terminationStatus == 0 else {
+            return false
+        }
+
+        let data = pipe.fileHandleForReading.readDataToEndOfFile()
+        let output = String(data: data, encoding: .utf8) ?? ""
+        if output.contains("Signature=adhoc") || output.contains("code object is not signed at all") {
+            return false
+        }
+
+        return output.contains("Authority=Developer ID Application")
+            || output.contains("Authority=Apple Development")
     }
 
     private static func readToEnd(from descriptor: Int32) -> Data {

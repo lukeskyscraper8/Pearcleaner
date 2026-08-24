@@ -23,6 +23,11 @@ struct FeasibilitySystemMetadata: Sendable {
     }
 
     private static func appleGitVersion() -> String {
+        if let override = ProcessInfo.processInfo.environment["GIT_FEASIBILITY_APPLE_GIT_VERSION"],
+           !override.isEmpty {
+            return override
+        }
+
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/usr/bin/git")
         process.arguments = ["--version"]

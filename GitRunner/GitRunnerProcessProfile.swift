@@ -239,9 +239,34 @@ enum GitRunnerSignatureVerifier {
 
 enum GitRunnerHarnessProbe {
     static let openProbeArgument = GitRunnerInvocation.openProbeArgument
+    static let writeProbeArgument = GitRunnerInvocation.writeProbeArgument
+    static let execProbeArgument = GitRunnerInvocation.execProbeArgument
+    static let connectProbeArgument = GitRunnerInvocation.connectProbeArgument
+    static let hangProbeArgument = GitRunnerInvocation.hangProbeArgument
 
     static func runIfRequested(arguments: [String]) -> Bool {
-        guard arguments.count == 2, arguments[0] == openProbeArgument else {
+        guard let probe = arguments.first else {
+            return false
+        }
+
+        switch probe {
+        case openProbeArgument:
+            return runOpenProbe(arguments: arguments)
+        case writeProbeArgument:
+            return runWriteProbe(arguments: arguments)
+        case execProbeArgument:
+            return runExecProbe(arguments: arguments)
+        case connectProbeArgument:
+            return runConnectProbe(arguments: arguments)
+        case hangProbeArgument:
+            return runHangProbe()
+        default:
+            return false
+        }
+    }
+
+    private static func runOpenProbe(arguments: [String]) -> Bool {
+        guard arguments.count == 2 else {
             return false
         }
 
@@ -256,5 +281,125 @@ enum GitRunnerHarnessProbe {
         close(descriptor)
         fputs("probe_open_errno=0\n", stderr)
         exit(1)
+    }
+
+    private static func runWriteProbe(arguments: [String]) -> Bool {
+        guard arguments.count == 2 else {
+            return false
+        }
+
+        let path = arguments[1]
+        let descriptor = open(path, O_WRONLY | O_CREAT, S_IRUSR | S_IWUSR)
+        if descriptor < 0 {
+            fputs("probe_write_errno=\(errno)\n", stderr)
+            let expectedDenial = errno == EPERM || errno == EACCES || errno == EROFS
+            exit(expectedDenial ? 0 : 1)
+        }
+
+        close(descriptor)
+        fputs("probe_write_errno=0\n", stderr)
+        exit(1)
+    }
+
+    private static func runExecProbe(arguments: [String]) -> Bool {
+        guard arguments.count == 2 else {
+            return false
+        }
+
+        let path = arguments[1]
+        var fileActions: posix_spawn_file_actions_t? = nil
+        guard posix_spawn_file_actions_init(&fileActions) == 0 else {
+            fputs("probe_exec_errno=\(errno)\n", stderr)
+            exit(1)
+        }
+        defer {
+            posix_spawn_file_actions_destroy(&fileActions)
+        }
+
+        let devNull = open("/dev/null", O_RDONLY)
+        if devNull >= 0 {
+            _ = posix_spawn_file_actions_adddup2(&fileActions, devNull, STDIN_FILENO)
+            _ = posix_spawn_file_actions_adddup2(&fileActions, devNull, STDOUT_FILENO)
+            _ = posix_spawn_file_actions_adddup2(&fileActions, devNull, STDERR_FILENO)
+            _ = posix_spawn_file_actions_addclose(&fileActions, devNull)
+        }
+
+        let argvStrings = [path]
+        let argv = argvStrings.map { string -> UnsafeMutablePointer<CChar> in
+            guard let duplicated = strdup(string) else {
+                fatalError("GitRunner exec probe argv allocation failed")
+            }
+            return duplicated
+        }
+        defer { argv.forEach { free($0) } }
+        var argvWithNull = argv.map { Optional($0) }
+        argvWithNull.append(nil)
+
+        var spawnedPID: pid_t = 0
+        let spawnStatus = argvWithNull.withUnsafeMutableBufferPointer { argvBuffer in
+            posix_spawn(&spawnedPID, path, &fileActions, nil, argvBuffer.baseAddress, environ)
+        }
+
+        if spawnStatus != 0 {
+            fputs("probe_exec_errno=\(spawnStatus)\n", stderr)
+            let expectedDenial = spawnStatus == EPERM || spawnStatus == EACCES
+            exit(expectedDenial ? 0 : 1)
+        }
+
+        var waitStatus: Int32 = 0
+        waitpid(spawnedPID, &waitStatus, 0)
+        fputs("probe_exec_errno=0\n", stderr)
+        exit(1)
+    }
+
+    private static func runConnectProbe(arguments: [String]) -> Bool {
+        guard arguments.count == 3,
+              let port = UInt16(arguments[2]) else {
+            return false
+        }
+
+        let host = arguments[1]
+        var hints = addrinfo(
+            ai_flags: AI_NUMERICSERV,
+            ai_family: AF_UNSPEC,
+            ai_socktype: SOCK_STREAM,
+            ai_protocol: IPPROTO_TCP,
+            ai_addrlen: 0,
+            ai_canonname: nil,
+            ai_addr: nil,
+            ai_next: nil
+        )
+
+        var addressInfo: UnsafeMutablePointer<addrinfo>?
+        let lookupStatus = getaddrinfo(host, String(port), &hints, &addressInfo)
+        guard lookupStatus == 0, let addressInfo else {
+            fputs("probe_connect_errno=\(lookupStatus)\n", stderr)
+            exit(lookupStatus == EAI_NONAME || lookupStatus == EAI_FAIL ? 0 : 1)
+        }
+        defer { freeaddrinfo(addressInfo) }
+
+        let socketDescriptor = socket(addressInfo.pointee.ai_family, addressInfo.pointee.ai_socktype, addressInfo.pointee.ai_protocol)
+        if socketDescriptor < 0 {
+            fputs("probe_connect_errno=\(errno)\n", stderr)
+            let expectedDenial = errno == EPERM || errno == EACCES
+            exit(expectedDenial ? 0 : 1)
+        }
+        defer { close(socketDescriptor) }
+
+        let connectStatus = connect(socketDescriptor, addressInfo.pointee.ai_addr, addressInfo.pointee.ai_addrlen)
+        if connectStatus != 0 {
+            fputs("probe_connect_errno=\(errno)\n", stderr)
+            let expectedDenial = errno == EPERM || errno == EACCES || errno == ENETDOWN
+            exit(expectedDenial ? 0 : 1)
+        }
+
+        fputs("probe_connect_errno=0\n", stderr)
+        exit(1)
+    }
+
+    private static func runHangProbe() -> Bool {
+        while true {
+            sleep(3600)
+        }
     }
 }

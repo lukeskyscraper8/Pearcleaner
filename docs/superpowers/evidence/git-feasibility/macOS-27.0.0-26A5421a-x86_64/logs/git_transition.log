@@ -1,0 +1,10 @@
+runner=/Users/lukerow/Developer/Pearcleaner/.worktrees/project-scanner-slice-2/.build/GitFeasibilityDerivedData/Build/Products/Release/GitFeasibilityHarness.app/Contents/MacOS/GitRunner
+repository_root=/var/folders/_j/fvl5tvl9219_scjq4ln6yj500000gn/T/git-transition-ED49D256-4BF0-49F6-8882-FB4EC99AF5BE
+metadata_transition_exit=132
+metadata_stdout=
+metadata_stderr=
+metadata_read_succeeded=false
+working_tree_probe_exit=132
+working_tree_probe_stderr=
+working_tree_read_denied=false
+sandbox_denial_verified=false

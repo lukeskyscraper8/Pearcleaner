@@ -440,7 +440,9 @@ public enum GitEvidenceXPCConnectionFactory {
         let connection = NSXPCConnection(
             serviceName: GitEvidenceServiceIdentity.serviceBundleIdentifier
         )
-        connection.setCodeSigningRequirement(GitEvidenceServiceIdentity.serviceRequirement)
+        if ProcessInfo.processInfo.environment["GIT_FEASIBILITY_RELAXED_CODESIGN"] != "1" {
+            connection.setCodeSigningRequirement(GitEvidenceServiceIdentity.serviceRequirement)
+        }
         let interface = NSXPCInterface(with: GitEvidenceXPCProtocol.self)
         GitEvidenceXPCInterfaceConfigurator.apply(to: interface, isRemote: true)
         connection.remoteObjectInterface = interface

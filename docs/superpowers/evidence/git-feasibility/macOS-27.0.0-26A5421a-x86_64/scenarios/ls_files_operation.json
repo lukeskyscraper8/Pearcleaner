@@ -1,0 +1,10 @@
+{
+  "details" : {
+    "scenario_failure" : "Couldn’t communicate with a helper application.",
+    "summary" : "Couldn’t communicate with a helper application."
+  },
+  "id" : "ls_files_operation",
+  "passed" : false,
+  "sandboxLogPath" : "logs\/ls_files_operation.log",
+  "status" : "failed"
+}

@@ -1,0 +1,93 @@
+{
+  "appleGitVersion" : "git version 2.54.0 (Apple Git-157)",
+  "architecture" : "arm64",
+  "harnessVersion" : "5.4.5",
+  "osBuildFamily" : "macOS-27.0.0-26A5421a",
+  "overallStatus" : "failed",
+  "pearcleanerVersion" : "5.4.5",
+  "runnerVersion" : "1.0.0",
+  "scenarios" : [
+    {
+      "details" : {
+        "scenario_failure" : "Couldn’t communicate with a helper application.",
+        "summary" : "Couldn’t communicate with a helper application."
+      },
+      "id" : "descriptor_transfer",
+      "passed" : false,
+      "sandboxLogPath" : "logs\/descriptor_transfer.log",
+      "status" : "failed"
+    },
+    {
+      "details" : {
+        "scenario_failure" : "Couldn’t communicate with a helper application.",
+        "summary" : "Couldn’t communicate with a helper application."
+      },
+      "id" : "ls_files_operation",
+      "passed" : false,
+      "sandboxLogPath" : "logs\/ls_files_operation.log",
+      "status" : "failed"
+    },
+    {
+      "details" : {
+        "scenario_failure" : "Couldn’t communicate with a helper application.",
+        "summary" : "Couldn’t communicate with a helper application."
+      },
+      "id" : "ls_tree_operation",
+      "passed" : false,
+      "sandboxLogPath" : "logs\/ls_tree_operation.log",
+      "status" : "failed"
+    },
+    {
+      "details" : {
+        "scenario_failure" : "Couldn’t communicate with a helper application.",
+        "summary" : "Couldn’t communicate with a helper application."
+      },
+      "id" : "cat_file_batch_operation",
+      "passed" : false,
+      "sandboxLogPath" : "logs\/cat_file_batch_operation.log",
+      "status" : "failed"
+    },
+    {
+      "details" : {
+        "allowed_kinds" : "working_tree_canary,sibling_user_data,pearcleaner_private_state,metadata_write,project_executable_launch,network_access",
+        "denied_kinds" : "",
+        "runner_sandbox_enforcement_expected" : "true",
+        "summary" : "Sandbox denial matrix failed: working_tree_canary, sibling_user_data, pearcleaner_private_state, metadata_write, project_executable_launch, network_access were not denied."
+      },
+      "id" : "sandbox_denial",
+      "passed" : false,
+      "sandboxLogPath" : "logs\/sandbox_denial.log",
+      "status" : "failed"
+    },
+    {
+      "details" : {
+        "git_launch_path" : "\/usr\/bin\/git",
+        "metadata_read_succeeded" : "false",
+        "runner_sandbox_enforcement_expected" : "true",
+        "runner_version" : "1.0.0",
+        "sandbox_denial_verified" : "false",
+        "summary" : "Git transition scenario failed metadata preservation and\/or sandbox denial checks.",
+        "working_tree_read_denied" : "false"
+      },
+      "id" : "git_transition",
+      "passed" : false,
+      "sandboxLogPath" : "logs\/git_transition.log",
+      "status" : "failed"
+    },
+    {
+      "details" : {
+        "failure_cleanup" : "xpc_unavailable=The operation couldn’t be completed. (GitEvidenceShared.FeasibilityScenarioFailure error 0.)",
+        "forced_kill_cleanup" : "hang_probe_did_not_start pid=31543 before=0 after_spawn=0",
+        "success_cleanup" : "xpc_unavailable=The operation couldn’t be completed. (GitEvidenceShared.FeasibilityScenarioFailure error 0.)",
+        "summary" : "Cleanup scenario failed forced SIGKILL cleanup; XPC checks were deferred.",
+        "xpc_checks_deferred" : "true"
+      },
+      "id" : "cleanup",
+      "passed" : false,
+      "sandboxLogPath" : "logs\/cleanup.log",
+      "status" : "failed"
+    }
+  ],
+  "schemaVersion" : 1,
+  "testTimestamp" : "2026-08-24T20:30:28Z"
+}

@@ -78,3 +78,11 @@ The script:
 - `appleGitVersion`
 
 Any mismatch or missing manifest disables Git evidence collection in production builds.
+
+## Host requirements (Task 11 matrix)
+
+The Release feasibility matrix requires a **Developer ID–signed and notarized** `GitFeasibilityHarness.app`. On hosts where embedded `GitEvidenceService.xpc` or bundled `GitRunner` cannot launch (for example unnotarized Developer ID builds rejected by Gatekeeper), XPC scenarios remain failed until notarization completes.
+
+The harness orchestrator itself is intentionally **not** App Sandbox–restricted so it can archive evidence and drive embedded XPC services. `GitEvidenceService` and `GitRunner` retain restrictive sandbox entitlements under test.
+
+Document deferred architectures in the feasibility script output when Rosetta or notarization is unavailable.

@@ -1,0 +1,10 @@
+{
+  "details" : {
+    "scenario_failure" : "Couldn’t communicate with a helper application.",
+    "summary" : "Couldn’t communicate with a helper application."
+  },
+  "id" : "descriptor_transfer",
+  "passed" : false,
+  "sandboxLogPath" : "logs\/descriptor_transfer.log",
+  "status" : "failed"
+}
