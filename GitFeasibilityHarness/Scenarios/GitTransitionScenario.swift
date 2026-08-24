@@ -15,6 +15,43 @@ struct GitTransitionScenario: FeasibilityScenario {
         try FileManager.default.createDirectory(at: logsDirectory, withIntermediateDirectories: true)
         let sandboxLogURL = logsDirectory.appendingPathComponent("\(id.rawValue).log")
 
+        do {
+            return try runScenario(
+                scenarioDirectory: scenarioDirectory,
+                sandboxLogURL: sandboxLogURL
+            )
+        } catch let failure as FeasibilityScenarioFailure {
+            if case let .scenarioFailed(_, reason) = failure {
+                return FeasibilityScenarioResult(
+                    id: id,
+                    status: .failed,
+                    passed: false,
+                    sandboxLogPath: "logs/\(id.rawValue).log",
+                    details: [
+                        "summary": reason,
+                        "scenario_failure": reason,
+                    ]
+                )
+            }
+            throw failure
+        } catch {
+            return FeasibilityScenarioResult(
+                id: id,
+                status: .failed,
+                passed: false,
+                sandboxLogPath: "logs/\(id.rawValue).log",
+                details: [
+                    "summary": error.localizedDescription,
+                    "scenario_failure": error.localizedDescription,
+                ]
+            )
+        }
+    }
+
+    private func runScenario(
+        scenarioDirectory: URL,
+        sandboxLogURL: URL
+    ) throws -> FeasibilityScenarioResult {
         let runnerURL = try GitTransitionScenarioSupport.embeddedRunnerURL()
         let repositoryRoot = try GitTransitionScenarioSupport.repositoryRootURL()
         defer { try? FileManager.default.removeItem(at: repositoryRoot) }

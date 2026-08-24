@@ -14,6 +14,9 @@ public enum FeasibilityScenarioID: String, Codable, CaseIterable, Sendable {
     case sandboxDenial = "sandbox_denial"
     case gitTransition = "git_transition"
     case cleanup = "cleanup"
+    case lsFilesOperation = "ls_files_operation"
+    case lsTreeOperation = "ls_tree_operation"
+    case catFileBatchOperation = "cat_file_batch_operation"
 }
 
 public enum FeasibilityScenarioStatus: String, Codable, Sendable {

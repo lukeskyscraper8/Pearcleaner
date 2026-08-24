@@ -32,6 +32,10 @@ public enum GitEvidenceXPCOperationStatus: String, Sendable {
     case invalidRequest = "invalid_request"
     case descriptorRejected = "descriptor_rejected"
     case notImplemented = "not_implemented"
+    case operationFailed = "operation_failed"
+    case outputRejected = "output_rejected"
+    case timedOut = "timed_out"
+    case outputLimitExceeded = "output_limit_exceeded"
 }
 
 @objc(GitEvidenceXPCFileIdentity)
@@ -223,6 +227,7 @@ public final class GitEvidenceXPCRequest: NSObject, NSSecureCoding, Sendable {
 
     public let operation: String
     public let headObjectID: GitEvidenceXPCObjectID?
+    public let catFileObjectIDs: [GitEvidenceXPCObjectID]
     public let repositoryFormatVersion: Int32
     public let objectHashAlgorithm: String
     public let transferredDescriptors: [GitEvidenceXPCTransferredDescriptor]
@@ -230,6 +235,7 @@ public final class GitEvidenceXPCRequest: NSObject, NSSecureCoding, Sendable {
     public init(
         operation: GitEvidenceXPCOperation,
         headObjectID: GitEvidenceXPCObjectID?,
+        catFileObjectIDs: [GitEvidenceXPCObjectID] = [],
         repositoryFormatVersion: Int32,
         objectHashAlgorithm: GitEvidenceXPCObjectHashAlgorithm,
         transferredDescriptors: [GitEvidenceXPCTransferredDescriptor]
@@ -239,6 +245,7 @@ public final class GitEvidenceXPCRequest: NSObject, NSSecureCoding, Sendable {
         }
         self.operation = operation.rawValue
         self.headObjectID = headObjectID
+        self.catFileObjectIDs = catFileObjectIDs
         self.repositoryFormatVersion = repositoryFormatVersion
         self.objectHashAlgorithm = objectHashAlgorithm.rawValue
         self.transferredDescriptors = transferredDescriptors
@@ -260,6 +267,10 @@ public final class GitEvidenceXPCRequest: NSObject, NSSecureCoding, Sendable {
 
         self.operation = operation
         headObjectID = coder.decodeObject(of: GitEvidenceXPCObjectID.self, forKey: "headObjectID")
+        catFileObjectIDs = coder.decodeObject(
+            of: [GitEvidenceXPCObjectID.self, NSArray.self],
+            forKey: "catFileObjectIDs"
+        ) as? [GitEvidenceXPCObjectID] ?? []
         repositoryFormatVersion = coder.decodeInt32(forKey: "repositoryFormatVersion")
         self.objectHashAlgorithm = objectHashAlgorithm
         self.transferredDescriptors = transferredDescriptors
@@ -269,6 +280,7 @@ public final class GitEvidenceXPCRequest: NSObject, NSSecureCoding, Sendable {
     public func encode(with coder: NSCoder) {
         coder.encode(operation as NSString, forKey: "operation")
         coder.encode(headObjectID, forKey: "headObjectID")
+        coder.encode(catFileObjectIDs as NSArray, forKey: "catFileObjectIDs")
         coder.encode(repositoryFormatVersion, forKey: "repositoryFormatVersion")
         coder.encode(objectHashAlgorithm as NSString, forKey: "objectHashAlgorithm")
         coder.encode(transferredDescriptors as NSArray, forKey: "transferredDescriptors")

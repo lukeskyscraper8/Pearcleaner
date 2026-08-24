@@ -27,6 +27,8 @@
 		A30000000000000000000039 /* Security.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = A30000000000000000000038 /* Security.framework */; };
 		A3000000000000000000003A /* Security.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = A30000000000000000000038 /* Security.framework */; };
 		A3000000000000000000003B /* Security.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = A30000000000000000000038 /* Security.framework */; };
+		A30000000000000000000048 /* GitEvidenceService.xpc in Frameworks */ = {isa = PBXBuildFile; fileRef = A30000000000000000000012 /* GitEvidenceService.xpc */; };
+		A3000000000000000000004C /* libGitEvidenceShared.a in Frameworks */ = {isa = PBXBuildFile; fileRef = A30000000000000000000001 /* libGitEvidenceShared.a */; };
 		A12700000000000000000001 /* PrivilegedOperation.swift in Sources */ = {isa = PBXBuildFile; fileRef = A12700000000000000000002 /* PrivilegedOperation.swift */; };
 		A12700000000000000000003 /* PrivilegedOperation.swift in Sources */ = {isa = PBXBuildFile; fileRef = A12700000000000000000002 /* PrivilegedOperation.swift */; };
 		A12600000000000000000001 /* PearcleanerPreferencesStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = A12600000000000000000002 /* PearcleanerPreferencesStore.swift */; };
@@ -151,6 +153,20 @@
 			remoteInfo = GitEvidenceShared;
 		};
 		A20000000000000000000050 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = C77B8FF82AF18E2E009CC655 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = A30000000000000000000008;
+			remoteInfo = GitEvidenceShared;
+		};
+		A3000000000000000000004A /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = C77B8FF82AF18E2E009CC655 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = A3000000000000000000001A;
+			remoteInfo = GitEvidenceService;
+		};
+		A3000000000000000000004D /* PBXContainerItemProxy */ = {
 			isa = PBXContainerItemProxy;
 			containerPortal = C77B8FF82AF18E2E009CC655 /* Project object */;
 			proxyType = 1;
@@ -399,6 +415,8 @@
 		A30000000000000000000002 /* GitEvidenceShared */ = {isa = PBXFileSystemSynchronizedRootGroup; explicitFileTypes = {}; explicitFolders = (); path = GitEvidenceShared; sourceTree = "<group>"; };
 		A3000000000000000000000A /* GitRunner */ = {isa = PBXFileSystemSynchronizedRootGroup; explicitFileTypes = {}; explicitFolders = (); path = GitRunner; sourceTree = "<group>"; };
 		A30000000000000000000013 /* GitEvidenceService */ = {isa = PBXFileSystemSynchronizedRootGroup; explicitFileTypes = {}; explicitFolders = (); path = GitEvidenceService; sourceTree = "<group>"; };
+		A30000000000000000000040 /* GitEvidenceServiceTests */ = {isa = PBXFileSystemSynchronizedRootGroup; explicitFileTypes = {}; explicitFolders = (); path = GitEvidenceServiceTests; sourceTree = "<group>"; };
+		A30000000000000000000041 /* GitEvidenceServiceTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = GitEvidenceServiceTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		A3000000000000000000001E /* GitFeasibilityHarness */ = {isa = PBXFileSystemSynchronizedRootGroup; explicitFileTypes = {}; explicitFolders = (); path = GitFeasibilityHarness; sourceTree = "<group>"; };
 		A20000000000000000000003 /* ProjectScannerCore */ = {isa = PBXFileSystemSynchronizedRootGroup; explicitFileTypes = {}; explicitFolders = (); path = ProjectScannerCore; sourceTree = "<group>"; };
 		A20000000000000000000004 /* ProjectScannerCoreTests */ = {isa = PBXFileSystemSynchronizedRootGroup; explicitFileTypes = {}; explicitFolders = (); path = ProjectScannerCoreTests; sourceTree = "<group>"; };
@@ -467,6 +485,15 @@
 			buildActionMask = 2147483647;
 			files = (
 				A20000000000000000000009 /* libProjectScannerCore.a in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		A30000000000000000000047 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				A30000000000000000000048 /* GitEvidenceService.xpc in Frameworks */,
+				A3000000000000000000004C /* libGitEvidenceShared.a in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -599,6 +626,7 @@
 				A30000000000000000000002 /* GitEvidenceShared */,
 				A3000000000000000000000A /* GitRunner */,
 				A30000000000000000000013 /* GitEvidenceService */,
+				A30000000000000000000040 /* GitEvidenceServiceTests */,
 				A3000000000000000000001E /* GitFeasibilityHarness */,
 				C72893102AFD51EA00C8C1CD /* PearcleanerSentinel */,
 				C78121642BC892A000BE06BD /* FinderOpen */,
@@ -618,6 +646,7 @@
 				A30000000000000000000001 /* libGitEvidenceShared.a */,
 				A30000000000000000000009 /* GitRunner */,
 				A30000000000000000000012 /* GitEvidenceService.xpc */,
+				A30000000000000000000041 /* GitEvidenceServiceTests.xctest */,
 				A3000000000000000000001D /* GitFeasibilityHarness.app */,
 				C728930F2AFD51EA00C8C1CD /* PearcleanerSentinel */,
 				C78121632BC892A000BE06BD /* FinderOpen.appex */,
@@ -918,6 +947,29 @@
 			productReference = A30000000000000000000012 /* GitEvidenceService.xpc */;
 			productType = "com.apple.product-type.xpc-service";
 		};
+		A30000000000000000000042 /* GitEvidenceServiceTests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = A30000000000000000000043 /* Build configuration list for PBXNativeTarget "GitEvidenceServiceTests" */;
+			buildPhases = (
+				A30000000000000000000046 /* Sources */,
+				A30000000000000000000047 /* Frameworks */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				A3000000000000000000004B /* PBXTargetDependency */,
+				A3000000000000000000004E /* PBXTargetDependency */,
+			);
+			fileSystemSynchronizedGroups = (
+				A30000000000000000000040 /* GitEvidenceServiceTests */,
+			);
+			name = GitEvidenceServiceTests;
+			packageProductDependencies = (
+			);
+			productName = GitEvidenceServiceTests;
+			productReference = A30000000000000000000041 /* GitEvidenceServiceTests.xctest */;
+			productType = "com.apple.product-type.bundle.unit-test";
+		};
 		A30000000000000000000029 /* GitFeasibilityHarness */ = {
 			isa = PBXNativeTarget;
 			buildConfigurationList = A30000000000000000000028 /* Build configuration list for PBXNativeTarget "GitFeasibilityHarness" */;
@@ -980,6 +1032,9 @@
 					A3000000000000000000001A = {
 						CreatedOnToolsVersion = 26.0;
 					};
+					A30000000000000000000042 = {
+						CreatedOnToolsVersion = 26.0;
+					};
 					A30000000000000000000029 = {
 						CreatedOnToolsVersion = 26.0;
 					};
@@ -1036,6 +1091,7 @@
 				A30000000000000000000008 /* GitEvidenceShared */,
 				A30000000000000000000011 /* GitRunner */,
 				A3000000000000000000001A /* GitEvidenceService */,
+				A30000000000000000000042 /* GitEvidenceServiceTests */,
 				A30000000000000000000029 /* GitFeasibilityHarness */,
 				C728930E2AFD51EA00C8C1CD /* PearcleanerSentinel */,
 				C78121622BC892A000BE06BD /* FinderOpen */,
@@ -1096,6 +1152,13 @@
 			runOnlyForDeploymentPostprocessing = 0;
 		};
 		A30000000000000000000014 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		A30000000000000000000046 /* Sources */ = {
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
@@ -1250,6 +1313,16 @@
 			isa = PBXTargetDependency;
 			target = A3000000000000000000001A /* GitEvidenceService */;
 			targetProxy = A30000000000000000000036 /* PBXContainerItemProxy */;
+		};
+		A3000000000000000000004B /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = A3000000000000000000001A /* GitEvidenceService */;
+			targetProxy = A3000000000000000000004A /* PBXContainerItemProxy */;
+		};
+		A3000000000000000000004E /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = A30000000000000000000008 /* GitEvidenceShared */;
+			targetProxy = A3000000000000000000004D /* PBXContainerItemProxy */;
 		};
 		A2000000000000000000004E /* PBXTargetDependency */ = {
 			isa = PBXTargetDependency;
@@ -1932,6 +2005,36 @@
 			};
 			name = Release;
 		};
+		A30000000000000000000044 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "";
+				GENERATE_INFOPLIST_FILE = YES;
+				MACOSX_DEPLOYMENT_TARGET = 13.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.lukerow.Pearcleaner.GitEvidenceServiceTests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = macosx;
+				SWIFT_STRICT_CONCURRENCY = complete;
+				SWIFT_VERSION = 5.0;
+				TEST_HOST = "";
+			};
+			name = Debug;
+		};
+		A30000000000000000000045 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "";
+				GENERATE_INFOPLIST_FILE = YES;
+				MACOSX_DEPLOYMENT_TARGET = 13.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.lukerow.Pearcleaner.GitEvidenceServiceTests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = macosx;
+				SWIFT_STRICT_CONCURRENCY = complete;
+				SWIFT_VERSION = 5.0;
+				TEST_HOST = "";
+			};
+			name = Release;
+		};
 		A30000000000000000000026 /* Debug */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
@@ -2088,6 +2191,15 @@
 			buildConfigurations = (
 				A30000000000000000000017 /* Debug */,
 				A30000000000000000000018 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		A30000000000000000000043 /* Build configuration list for PBXNativeTarget "GitEvidenceServiceTests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				A30000000000000000000044 /* Debug */,
+				A30000000000000000000045 /* Release */,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;

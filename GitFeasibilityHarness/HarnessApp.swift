@@ -84,6 +84,9 @@ struct FeasibilitySystemMetadata: Sendable {
 struct HarnessRunner: Sendable {
     private let scenarios: [any FeasibilityScenario] = [
         DescriptorTransferScenario(),
+        LsFilesOperationScenario(),
+        LsTreeOperationScenario(),
+        CatFileBatchOperationScenario(),
         SandboxDenialScenario(),
         GitTransitionScenario(),
         CleanupScenario(),
