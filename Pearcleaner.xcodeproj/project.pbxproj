@@ -18,6 +18,8 @@
 		A20000000000000000000041 /* KeychainProjectKeyStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000042 /* KeychainProjectKeyStore.swift */; };
 		A20000000000000000000043 /* ProjectScannerEnvironment.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000044 /* ProjectScannerEnvironment.swift */; };
 		A20000000000000000000045 /* ScannerDiagnosticsAdapter.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000046 /* ScannerDiagnosticsAdapter.swift */; };
+		A20000000000000000000048 /* GitFeasibilityRegistry.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000049 /* GitFeasibilityRegistry.swift */; };
+		A2000000000000000000004A /* libGitEvidenceShared.a in Frameworks */ = {isa = PBXBuildFile; fileRef = A30000000000000000000001 /* libGitEvidenceShared.a */; };
 		A12700000000000000000001 /* PrivilegedOperation.swift in Sources */ = {isa = PBXBuildFile; fileRef = A12700000000000000000002 /* PrivilegedOperation.swift */; };
 		A12700000000000000000003 /* PrivilegedOperation.swift in Sources */ = {isa = PBXBuildFile; fileRef = A12700000000000000000002 /* PrivilegedOperation.swift */; };
 		A12600000000000000000001 /* PearcleanerPreferencesStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = A12600000000000000000002 /* PearcleanerPreferencesStore.swift */; };
@@ -119,6 +121,13 @@
 			proxyType = 1;
 			remoteGlobalIDString = A30000000000000000000011;
 			remoteInfo = GitRunner;
+		};
+		A2000000000000000000004C /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = C77B8FF82AF18E2E009CC655 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = A30000000000000000000008;
+			remoteInfo = GitEvidenceShared;
 		};
 		C78121692BC892A000BE06BD /* PBXContainerItemProxy */ = {
 			isa = PBXContainerItemProxy;
@@ -232,6 +241,7 @@
 		A20000000000000000000042 /* KeychainProjectKeyStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProjectScanner/KeychainProjectKeyStore.swift; sourceTree = "<group>"; };
 		A20000000000000000000044 /* ProjectScannerEnvironment.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProjectScanner/ProjectScannerEnvironment.swift; sourceTree = "<group>"; };
 		A20000000000000000000046 /* ScannerDiagnosticsAdapter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProjectScanner/ScannerDiagnosticsAdapter.swift; sourceTree = "<group>"; };
+		A20000000000000000000049 /* GitFeasibilityRegistry.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProjectScanner/GitFeasibilityRegistry.swift; sourceTree = "<group>"; };
 		A12400000000000000000001 /* PearcleanerTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = PearcleanerTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		A12500000000000000000002 /* SentinelServiceManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SentinelServiceManager.swift; sourceTree = "<group>"; };
 		A12600000000000000000002 /* PearcleanerPreferencesStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PearcleanerPreferencesStore.swift; sourceTree = "<group>"; };
@@ -444,6 +454,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				A2000000000000000000000A /* libProjectScannerCore.a in Frameworks */,
+				A2000000000000000000004A /* libGitEvidenceShared.a in Frameworks */,
 				C707E2942EAF217200AAD817 /* Sparkle in Frameworks */,
 				C76EDCD62C45DC82000CF29D /* AlinFoundation in Frameworks */,
 				C7A2A4D92DDB95C4006E05E4 /* ArgumentParser in Frameworks */,
@@ -468,6 +479,7 @@
 				A20000000000000000000042 /* KeychainProjectKeyStore.swift */,
 				A20000000000000000000044 /* ProjectScannerEnvironment.swift */,
 				A20000000000000000000046 /* ScannerDiagnosticsAdapter.swift */,
+				A20000000000000000000049 /* GitFeasibilityRegistry.swift */,
 				C77B90172AF19382009CC655 /* AppCommands.swift */,
 				C7DD49E92BAB4D8100CCBA16 /* AppInfoFetch.swift */,
 				C78D7B202D556F16003DD49F /* AppPathsFetch.swift */,
@@ -744,6 +756,7 @@
 			dependencies = (
 				C781216A2BC892A000BE06BD /* PBXTargetDependency */,
 				A2000000000000000000000E /* PBXTargetDependency */,
+				A2000000000000000000004E /* PBXTargetDependency */,
 			);
 			fileSystemSynchronizedGroups = (
 				C71B87562EF49C58009C5B07 /* TCC */,
@@ -1090,6 +1103,7 @@
 				A20000000000000000000041 /* KeychainProjectKeyStore.swift in Sources */,
 				A20000000000000000000043 /* ProjectScannerEnvironment.swift in Sources */,
 				A20000000000000000000045 /* ScannerDiagnosticsAdapter.swift in Sources */,
+				A20000000000000000000048 /* GitFeasibilityRegistry.swift in Sources */,
 				C7DD49EA2BAB4D8100CCBA16 /* AppInfoFetch.swift in Sources */,
 				C75AED102EC259C800824CCD /* UndoHistoryManager.swift in Sources */,
 				C7CC10E42E94734E0057B7E2 /* ProcessEnv.swift in Sources */,
@@ -1173,6 +1187,11 @@
 			isa = PBXTargetDependency;
 			target = A30000000000000000000011 /* GitRunner */;
 			targetProxy = A3000000000000000000002C /* PBXContainerItemProxy */;
+		};
+		A2000000000000000000004E /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = A30000000000000000000008 /* GitEvidenceShared */;
+			targetProxy = A2000000000000000000004C /* PBXContainerItemProxy */;
 		};
 /* End PBXTargetDependency section */
 

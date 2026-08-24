@@ -39,3 +39,7 @@ protocol UUIDGenerating: Sendable {
 public protocol ScannerEnvironmentProviding: Sendable {
     func privateStateParent() throws -> PrivateStateParentCapability
 }
+
+public protocol GitFeasibilityProviding: Sendable {
+    func currentSnapshot() -> GitFeasibilitySnapshot
+}
