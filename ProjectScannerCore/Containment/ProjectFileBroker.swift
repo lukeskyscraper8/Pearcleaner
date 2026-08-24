@@ -827,6 +827,42 @@ actor FileBroker {
         }
     }
 
+    func openGitMetadataTransfers(
+        for descriptors: [GitMetadataDescriptor]
+    ) throws -> [GitMetadataOpenedTransfer] {
+        let access = try makeGitMetadataAccess()
+        return try access.openTransfers(for: descriptors)
+    }
+
+    func revalidateGitMetadataManifest(_ manifest: GitMetadataDescriptorManifest) -> Bool {
+        do {
+            let access = try makeGitMetadataAccess()
+            defer { access.close() }
+            return access.revalidate(manifest)
+        } catch {
+            return false
+        }
+    }
+
+    func readBoundedGitMetadataFile(
+        at path: VerifiedRelativePath,
+        maxBytes: UInt64
+    ) throws -> Data {
+        let access = try makeGitMetadataAccess()
+        defer { access.close() }
+        return try access.readFile(at: path, maxBytes: maxBytes)
+    }
+
+    fileprivate func makeGitMetadataAccess() throws -> GitMetadataAccess {
+        let duplicate = try rootDescriptor.duplicate(accounting: descriptorAccounting)
+        let descriptor = try duplicate.take()
+        return GitMetadataAccess(
+            rootDescriptor: descriptor,
+            rootIdentity: rootIdentity,
+            limits: limits
+        )
+    }
+
     fileprivate func openForRead(_ candidate: FileCandidate) async throws -> OpenedReadFile {
         guard candidate.accessToken.brokerNonce == nonce else {
             throw FileAccessFailure(reason: .identityChanged)

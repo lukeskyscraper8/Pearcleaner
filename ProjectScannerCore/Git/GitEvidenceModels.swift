@@ -86,6 +86,87 @@ public enum GitEvidenceOperation: String, Sendable, Equatable, Codable {
     case catFileBatch = "cat_file_batch"
 }
 
+public enum GitIgnoredPathFacts: Sendable, Equatable {
+    case available(Set<VerifiedRelativePath>)
+    case unavailable
+}
+
+public struct GitPathFacts: Sendable, Equatable {
+    public let repositoryID: RepositoryCoverageID
+    public let indexedPaths: Set<VerifiedRelativePath>
+    public let headPaths: Set<VerifiedRelativePath>
+    public let headObjectIDsByPath: [VerifiedRelativePath: GitObjectID]
+    public let stagedPaths: Set<VerifiedRelativePath>
+    public let ignoredPaths: GitIgnoredPathFacts
+    public let workingTreePaths: Set<VerifiedRelativePath>
+
+    public var trackedPaths: Set<VerifiedRelativePath> { indexedPaths }
+
+    public var untrackedPaths: Set<VerifiedRelativePath> {
+        workingTreePaths.subtracting(indexedPaths)
+    }
+
+    public init(
+        repositoryID: RepositoryCoverageID,
+        indexedPaths: Set<VerifiedRelativePath>,
+        headPaths: Set<VerifiedRelativePath>,
+        headObjectIDsByPath: [VerifiedRelativePath: GitObjectID],
+        stagedPaths: Set<VerifiedRelativePath>,
+        ignoredPaths: GitIgnoredPathFacts,
+        workingTreePaths: Set<VerifiedRelativePath>
+    ) {
+        self.repositoryID = repositoryID
+        self.indexedPaths = indexedPaths
+        self.headPaths = headPaths
+        self.headObjectIDsByPath = headObjectIDsByPath
+        self.stagedPaths = stagedPaths
+        self.ignoredPaths = ignoredPaths
+        self.workingTreePaths = workingTreePaths
+    }
+}
+
+public struct GitEvidenceCollectionRequest: Sendable {
+    public let workingTreePaths: Set<VerifiedRelativePath>
+    public let gitignoreFilePaths: Set<VerifiedRelativePath>
+
+    public init(
+        workingTreePaths: Set<VerifiedRelativePath>,
+        gitignoreFilePaths: Set<VerifiedRelativePath> = []
+    ) {
+        self.workingTreePaths = workingTreePaths
+        self.gitignoreFilePaths = gitignoreFilePaths
+    }
+}
+
+public enum GitEvidenceCollectionOutcome: Sendable, Equatable {
+    case unavailable(CoverageReasonCode)
+    case partial(GitPathFacts, CoverageReasonCode)
+    case complete(GitPathFacts)
+}
+
+public struct GitMetadataOpenedTransfer: Sendable {
+    public let transfer: GitMetadataDescriptorTransfer
+    fileprivate let release: @Sendable () -> Void
+
+    internal init(
+        transfer: GitMetadataDescriptorTransfer,
+        release: @escaping @Sendable () -> Void
+    ) {
+        self.transfer = transfer
+        self.release = release
+    }
+
+    public func close() {
+        release()
+    }
+}
+
+enum GitIgnoreClassifierLimits {
+    static let maxBytesPerFile: UInt64 = 1 * 1_024 * 1_024
+    static let maxTotalBytes: UInt64 = 16 * 1_024 * 1_024
+    static let maxPatterns: UInt64 = 250_000
+}
+
 enum GitPreflightLimits {
     static let maxConfigBytes: UInt64 = 256 * 1_024
     static let maxHeadBytes: UInt64 = 512

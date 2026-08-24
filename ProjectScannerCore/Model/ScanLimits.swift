@@ -361,6 +361,44 @@ public struct ScanLimitOverrides: Codable, Sendable, Equatable {
     }
 }
 
+extension ScanLimits {
+    func replacingGitMetadataDescriptors(_ value: UInt64) -> ScanLimits {
+        ScanLimits(
+            generalFiles: generalFiles,
+            secretFileBytes: secretFileBytes,
+            lockfileBytes: lockfileBytes,
+            manifestBytes: manifestBytes,
+            installedManifests: installedManifests,
+            directories: directories,
+            directoryEntries: directoryEntries,
+            traversalDepth: traversalDepth,
+            relativePathBytes: relativePathBytes,
+            structuredDataDepth: structuredDataDepth,
+            parsedScalarBytes: parsedScalarBytes,
+            dependencyNodesPerLockfile: dependencyNodesPerLockfile,
+            dependencyNodesPerSession: dependencyNodesPerSession,
+            findingsPerFile: findingsPerFile,
+            findingsPerSession: findingsPerSession,
+            inputBytes: inputBytes,
+            wallTimeMilliseconds: wallTimeMilliseconds,
+            activeWorkers: activeWorkers,
+            activeProjectScans: activeProjectScans,
+            gitMetadataDescriptors: value,
+            gitDescriptorReserve: gitDescriptorReserve,
+            gitOperationMilliseconds: gitOperationMilliseconds,
+            gitOutputBytes: gitOutputBytes,
+            retainedInputBytes: retainedInputBytes,
+            parserArenaBytes: parserArenaBytes,
+            findingModelBytes: findingModelBytes,
+            rssSoftBytes: rssSoftBytes,
+            rssHardBytes: rssHardBytes,
+            maximumLinkHops: maximumLinkHops,
+            progressIntervalMilliseconds: progressIntervalMilliseconds,
+            cancellationLatencyMilliseconds: cancellationLatencyMilliseconds
+        )
+    }
+}
+
 private struct AnyCodingKey: CodingKey {
     let stringValue: String
     let intValue: Int?
