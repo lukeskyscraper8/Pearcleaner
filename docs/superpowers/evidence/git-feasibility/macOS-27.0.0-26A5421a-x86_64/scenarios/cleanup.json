@@ -1,0 +1,13 @@
+{
+  "details" : {
+    "failure_cleanup" : "xpc_unavailable=The operation couldn’t be completed. (GitEvidenceShared.FeasibilityScenarioFailure error 0.)",
+    "forced_kill_cleanup" : "hang_probe_did_not_start pid=31603 before=0 after_spawn=0",
+    "success_cleanup" : "xpc_unavailable=The operation couldn’t be completed. (GitEvidenceShared.FeasibilityScenarioFailure error 0.)",
+    "summary" : "Cleanup scenario failed forced SIGKILL cleanup; XPC checks were deferred.",
+    "xpc_checks_deferred" : "true"
+  },
+  "id" : "cleanup",
+  "passed" : false,
+  "sandboxLogPath" : "logs\/cleanup.log",
+  "status" : "failed"
+}

@@ -1,0 +1,2 @@
+# deploy secret
+sk_live_A92iXLpruo9C1unEF7dp3vfs

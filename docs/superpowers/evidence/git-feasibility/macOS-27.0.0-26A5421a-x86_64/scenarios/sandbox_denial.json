@@ -1,0 +1,12 @@
+{
+  "details" : {
+    "allowed_kinds" : "working_tree_canary,sibling_user_data,pearcleaner_private_state,metadata_write,project_executable_launch,network_access",
+    "denied_kinds" : "",
+    "runner_sandbox_enforcement_expected" : "true",
+    "summary" : "Sandbox denial matrix failed: working_tree_canary, sibling_user_data, pearcleaner_private_state, metadata_write, project_executable_launch, network_access were not denied."
+  },
+  "id" : "sandbox_denial",
+  "passed" : false,
+  "sandboxLogPath" : "logs\/sandbox_denial.log",
+  "status" : "failed"
+}

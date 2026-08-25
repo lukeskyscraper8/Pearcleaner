@@ -39,3 +39,91 @@ protocol UUIDGenerating: Sendable {
 public protocol ScannerEnvironmentProviding: Sendable {
     func privateStateParent() throws -> PrivateStateParentCapability
 }
+
+public protocol GitFeasibilityProviding: Sendable {
+    func currentSnapshot() -> GitFeasibilitySnapshot
+}
+
+public enum GitEvidenceExecutionFailure: String, Error, Sendable, Equatable {
+    case transportFailed = "transport_failed"
+    case timedOut = "timed_out"
+    case outputRejected = "output_rejected"
+    case descriptorRejected = "descriptor_rejected"
+    case operationFailed = "operation_failed"
+    case outputLimitExceeded = "output_limit_exceeded"
+    case unavailable = "unavailable"
+}
+
+public struct GitHeadTreePathEntry: Sendable, Equatable {
+    public let path: String
+    public let objectID: GitObjectID
+    public let objectType: String
+
+    public init(path: String, objectID: GitObjectID, objectType: String) {
+        self.path = path
+        self.objectID = objectID
+        self.objectType = objectType
+    }
+}
+
+public struct GitEvidenceExecutionRequest: Sendable {
+    public let operation: GitEvidenceOperation
+    public let context: GitRepositoryContext
+    public let descriptorTransfers: [GitMetadataDescriptorTransfer]
+    public let catFileObjectIDs: [GitObjectID]
+
+    public init(
+        operation: GitEvidenceOperation,
+        context: GitRepositoryContext,
+        descriptorTransfers: [GitMetadataDescriptorTransfer],
+        catFileObjectIDs: [GitObjectID] = []
+    ) {
+        self.operation = operation
+        self.context = context
+        self.descriptorTransfers = descriptorTransfers
+        self.catFileObjectIDs = catFileObjectIDs
+    }
+}
+
+public struct GitEvidenceExecutionResponse: Sendable, Equatable {
+    public let cachedPaths: [String]
+    public let headTreeEntries: [GitHeadTreePathEntry]
+    public let catFileBlobBytes: Data
+
+    public init(
+        cachedPaths: [String] = [],
+        headTreeEntries: [GitHeadTreePathEntry] = [],
+        catFileBlobBytes: Data = Data()
+    ) {
+        self.cachedPaths = cachedPaths
+        self.headTreeEntries = headTreeEntries
+        self.catFileBlobBytes = catFileBlobBytes
+    }
+}
+
+public protocol GitEvidenceExecuting: Sendable {
+    func execute(_ request: GitEvidenceExecutionRequest) async -> Result<
+        GitEvidenceExecutionResponse,
+        GitEvidenceExecutionFailure
+    >
+}
+
+public protocol GitIndexHeadBlobConsuming: Sendable {
+    func consumeBlob(
+        objectID: GitObjectID,
+        path: VerifiedRelativePath,
+        bytes: Data
+    ) async
+}
+
+public protocol ScanSessionIDGenerating: Sendable {
+    func makeScanSessionID() -> ScanSessionID
+}
+
+public struct SystemScanSessionIDGenerator: ScanSessionIDGenerating {
+    public init() {}
+
+    public func makeScanSessionID() -> ScanSessionID {
+        ScanSessionID(rawValue: UUID())
+    }
+}

@@ -74,5 +74,6 @@ grep -A3 'func handleScript' Pearcleaner/Logic/Brew/HomebrewUninstaller.swift \
 
 "$ROOT/script/project_scanner_boundary_checks.sh"
 "$ROOT/script/test_release_archive_payload.sh"
+"$ROOT/script/test_git_evidence_boundaries.sh"
 
 echo "security regression checks passed"

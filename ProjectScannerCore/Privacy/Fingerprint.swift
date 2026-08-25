@@ -13,7 +13,7 @@ enum FingerprintError: Error, Equatable {
 
 public struct ProjectKeyMaterial: Sendable {
     public let generation: UUID
-    fileprivate let key: SymmetricKey
+    internal let key: SymmetricKey
 
     init(generation: UUID, keyBytes: Data) throws {
         guard keyBytes.count == 32 else {
@@ -69,6 +69,65 @@ enum SuppressionFingerprintPersistence {
     static func decode(_ bytes: Data) throws -> SuppressionFingerprint {
         try SuppressionFingerprint(validatedBytes: bytes)
     }
+}
+
+enum SecretSuppressionFingerprintEncoder {
+    private static let domain = Data(
+        "com.lukerow.Pearcleaner.project-scanner.suppression.secret.v1".utf8
+    )
+    fileprivate static let findingKindBytes = Data(FindingKind.probableSecret.rawValue.utf8)
+
+    static func fingerprint(
+        projectID: ProjectID,
+        path: VerifiedRelativePath,
+        ruleID: RuleID,
+        ruleVersion: UInt32,
+        matchIdentity: SecretMatchIdentity,
+        keyMaterial: ProjectKeyMaterial
+    ) throws -> SuppressionFingerprint {
+        var framer = SuppressionMACFramer(keyMaterial: keyMaterial, fieldCount: 8)
+        try framer.updateField(tag: 0x01, bytes: domain)
+        try framer.updateUInt32Field(tag: 0x02, value: ScannerModule.schemaVersion)
+        try framer.updateField(tag: 0x03, bytes: encodedProjectUUID(projectID))
+        try framer.updateField(tag: 0x04, bytes: findingKindBytes)
+        try framer.updateField(tag: 0x05, bytes: Data(ruleID.rawValue.utf8))
+        try framer.updateUInt32Field(tag: 0x06, value: ruleVersion)
+        try framer.updatePathField(tag: 0x07, path: path)
+        try framer.updateField(tag: 0x08, bytes: matchIdentity.suppressionFieldBytes)
+        return try framer.finalize()
+    }
+}
+
+enum SecretSuppressionFingerprintTestSupport {
+    static func fingerprintWithAlternateDomain(
+        projectID: ProjectID,
+        path: VerifiedRelativePath,
+        ruleID: RuleID,
+        ruleVersion: UInt32,
+        matchIdentity: SecretMatchIdentity,
+        keyMaterial: ProjectKeyMaterial
+    ) throws -> SuppressionFingerprint {
+        var framer = SuppressionMACFramer(keyMaterial: keyMaterial, fieldCount: 8)
+        try framer.updateField(
+            tag: 0x01,
+            bytes: Data(
+                "com.lukerow.Pearcleaner.project-scanner.suppression.secret.alt.v1".utf8
+            )
+        )
+        try framer.updateUInt32Field(tag: 0x02, value: ScannerModule.schemaVersion)
+        try framer.updateField(tag: 0x03, bytes: encodedProjectUUID(projectID))
+        try framer.updateField(tag: 0x04, bytes: SecretSuppressionFingerprintEncoder.findingKindBytes)
+        try framer.updateField(tag: 0x05, bytes: Data(ruleID.rawValue.utf8))
+        try framer.updateUInt32Field(tag: 0x06, value: ruleVersion)
+        try framer.updatePathField(tag: 0x07, path: path)
+        try framer.updateField(tag: 0x08, bytes: matchIdentity.suppressionFieldBytes)
+        return try framer.finalize()
+    }
+}
+
+private func encodedProjectUUID(_ projectID: ProjectID) -> Data {
+    var uuid = projectID.rawValue.uuid
+    return withUnsafeBytes(of: &uuid) { Data($0) }
 }
 
 struct FramedMACTestVector: Sendable {

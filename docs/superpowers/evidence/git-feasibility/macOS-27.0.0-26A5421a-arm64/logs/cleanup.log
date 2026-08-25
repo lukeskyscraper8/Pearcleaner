@@ -1,0 +1,4 @@
+success_cleanup=xpc_unavailable=The operation couldn’t be completed. (GitEvidenceShared.FeasibilityScenarioFailure error 0.)
+failure_cleanup=xpc_unavailable=The operation couldn’t be completed. (GitEvidenceShared.FeasibilityScenarioFailure error 0.)
+forced_kill_cleanup=hang_probe_did_not_start pid=31543 before=0 after_spawn=0
+passed=false

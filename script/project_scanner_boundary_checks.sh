@@ -21,16 +21,18 @@ fi
 [[ -d "$TESTS" ]] || fail "ProjectScannerCoreTests source directory is missing"
 [[ -f "$PROJECT" ]] || fail "Xcode project file is missing"
 
-python3 - "$CORE" "$TESTS" "$PROJECT" <<'PY'
+python3 - "$ROOT" "$CORE" "$TESTS" "$PROJECT" <<'PY'
 import json
 import pathlib
 import re
 import subprocess
 import sys
 
-core = pathlib.Path(sys.argv[1])
-tests = pathlib.Path(sys.argv[2])
-project = pathlib.Path(sys.argv[3])
+repo_root = pathlib.Path(sys.argv[1])
+core = pathlib.Path(sys.argv[2])
+tests = pathlib.Path(sys.argv[3])
+project = pathlib.Path(sys.argv[4])
+pearcleaner = repo_root / "Pearcleaner"
 
 def fail(message):
     print(f"project scanner boundary check failed: {message}", file=sys.stderr)
@@ -187,7 +189,17 @@ if dependency_targets("ProjectScannerCoreTests") != [core_id]:
     fail("ProjectScannerCoreTests dependency graph is invalid")
 if dependency_targets("Pearcleaner").count(core_id) != 1:
     fail("Pearcleaner dependency graph is invalid")
-if dependency_targets("PearcleanerTests") != [target_ids["Pearcleaner"]]:
+git_evidence_shared_matches = [
+    (identifier, value) for identifier, value in objects.items()
+    if isinstance(value, dict)
+    and value.get("isa") == "PBXNativeTarget"
+    and value.get("name") == "GitEvidenceShared"
+]
+if len(git_evidence_shared_matches) != 1:
+    fail("GitEvidenceShared target must resolve exactly once")
+git_evidence_shared_id = git_evidence_shared_matches[0][0]
+expected_pearcleaner_tests_deps = sorted([target_ids["Pearcleaner"], git_evidence_shared_id])
+if sorted(dependency_targets("PearcleanerTests")) != expected_pearcleaner_tests_deps:
     fail("PearcleanerTests host dependency graph is invalid")
 for name in ("FinderOpen", "PearcleanerHelper", "PearcleanerSentinel"):
     if core_id in dependency_targets(name):
@@ -265,6 +277,7 @@ private_state_files = {
     "ProjectScannerCore/Persistence/ProjectStateStore.swift",
 }
 broker_file = "ProjectScannerCore/Containment/ProjectFileBroker.swift"
+git_metadata_access_file = "ProjectScannerCore/Git/GitMetadataAccess.swift"
 bookmark_file = "ProjectScannerCore/Persistence/ProjectBookmark.swift"
 broker_text = next(text for path, text in core_text.items() if relative_core[path] == broker_file)
 raw_call = re.compile(
@@ -298,7 +311,7 @@ for path, text in core_text.items():
     calls = raw_calls(text)
     if not calls:
         continue
-    if relative in {broker_file, state_operations_file}:
+    if relative in {broker_file, state_operations_file, git_metadata_access_file}:
         continue
     if relative in frozen_direct_calls:
         actual = {name: calls.count(name) for name in set(calls)}
@@ -331,12 +344,15 @@ for path, text in test_text.items():
     if raw_calls(text) and relative_tests[path] not in raw_test_files:
         fail("raw filesystem test authority escaped its exact allowlist")
 
+scan_coordinator_file = "ProjectScannerCore/Orchestration/ScanCoordinator.swift"
 for path, text in core_text.items():
     relative = relative_core[path]
-    if relative not in {broker_file, bookmark_file} and re.search(r"\.makeFileBroker\s*\(", text):
+    if relative not in {broker_file, bookmark_file, scan_coordinator_file} and re.search(r"\.makeFileBroker\s*\(", text):
         fail("RootCapability.makeFileBroker has an unauthorized production call site")
-    if relative != broker_file and re.search(r"\.makeTraversal\s*\(", text):
+    if relative not in {broker_file, scan_coordinator_file} and re.search(r"\.makeTraversal\s*\(", text):
         fail("FileBroker.makeTraversal has an unauthorized production call site")
+    if relative not in {broker_file, git_metadata_access_file} and re.search(r"GitMetadataAccess\s*\(", text):
+        fail("GitMetadataAccess construction escaped ProjectFileBroker.swift")
 bookmark_text = next(text for path, text in core_text.items() if relative_core[path] == bookmark_file)
 if len(re.findall(r"\.makeFileBroker\s*\(", bookmark_text)) != 1:
     fail("RootCapability.makeFileBroker has an unauthorized production call site")
@@ -389,8 +405,11 @@ for symbol, allowed in symbol_allowlists.items():
 for path in swift_files(core / "Containment"):
     if re.search(r"\b(?:O_WRONLY|O_RDWR|O_CREAT|O_TRUNC)\b", path.read_text()):
         fail("scanner containment code contains a write-capable open flag")
+for path in swift_files(core / "Git"):
+    if re.search(r"\b(?:O_WRONLY|O_RDWR|O_CREAT|O_TRUNC)\b", path.read_text()):
+        fail("scanner git metadata code contains a write-capable open flag")
 for path, text in core_text.items():
-    if relative_core[path] not in private_state_files | {broker_file}:
+    if relative_core[path] not in private_state_files | {broker_file, git_metadata_access_file}:
         continue
     for line in text.splitlines():
         if "flags:" not in line or "O_NOFOLLOW" not in line or "O_DIRECTORY" in line:
@@ -498,7 +517,7 @@ expected_ceilings = {
 }
 if scan_limits_arguments("static let hardCeilings") != expected_ceilings:
     fail("ScanLimits hard ceilings changed from the approved values")
-if len(re.findall(r"\bScanLimits\s*\(", limits_text)) != 3:
+if len(re.findall(r"\bScanLimits\s*\(", limits_text)) != 4:
     fail("ScanLimits construction escaped ScanLimits.swift")
 for path, text in core_text.items():
     if path != limits_path and re.search(r"\bScanLimits\s*\(", text):
@@ -638,8 +657,11 @@ key_declaration = re.search(
 )
 if (
     not key_declaration
-    or key_declaration.group(0).count("fileprivate let key: SymmetricKey") != 1
-    or len(re.findall(r"(?m)^\s{4}init\s*\(\s*generation\s*:\s*UUID\s*,\s*keyBytes\s*:\s*Data\s*\)", key_declaration.group(0))) != 1
+    or key_declaration.group(0).count("let key: SymmetricKey") != 1
+    or len(re.findall(
+        r"(?m)^\s{4}init\s*\(\s*generation\s*:\s*UUID\s*,\s*keyBytes\s*:\s*Data\s*\)",
+        key_declaration.group(0),
+    )) != 1
     or re.search(r"public\s+init\s*\(\s*generation\s*:\s*UUID\s*,\s*keyBytes\s*:", key_declaration.group(0))
     or re.search(r"public\s+(?:let|var)\s+(?:key|keyBytes|rawKey|rawBytes|material)\b", key_declaration.group(0))
     or [
@@ -649,6 +671,7 @@ if (
         )
     ] != ["generation"]
     or len(re.findall(r"\bpublic\s+init\s*\(", key_declaration.group(0))) != 1
+    or "public init(secureStorageRecord: Data)" not in key_declaration.group(0)
     or len(re.findall(r"\bpublic\s+func\s+secureStorageRecord\s*\(", key_declaration.group(0))) != 1
     or len(re.findall(r"\bpublic\s+func\s+", key_declaration.group(0))) != 1
 ):
@@ -747,6 +770,49 @@ if (
     or re.search(r"Data\s*\(\s*utf8\s*\[", redactor_text)
 ):
     fail("privacy redactor copies whole source input")
+
+allowed_git_executor_impl = {
+    "Pearcleaner/Logic/ProjectScanner/GitEvidencePlatformAdapter.swift",
+}
+allowed_git_executor_test_stubs = {
+    "ProjectScannerCoreTests/Git/GitEvidenceProviderTests.swift",
+    "ProjectScannerCoreTests/Orchestration/ScanCoordinatorIntegrationTests.swift",
+}
+allowed_git_evidence_shared_pearcleaner = {
+    "Pearcleaner/Logic/ProjectScanner/GitFeasibilityRegistry.swift",
+    "Pearcleaner/Logic/ProjectScanner/GitEvidencePlatformAdapter.swift",
+    "Pearcleaner/Logic/ProjectScanner/GitEvidenceXPCClient.swift",
+}
+allowed_git_xpc_client_pearcleaner = {
+    "Pearcleaner/Logic/ProjectScanner/GitEvidenceXPCClient.swift",
+    "Pearcleaner/Logic/ProjectScanner/GitEvidencePlatformAdapter.swift",
+}
+
+def pearcleaner_swift_files():
+    if not pearcleaner.is_dir():
+        return []
+    return sorted(pearcleaner.rglob("*.swift"))
+
+for path in pearcleaner_swift_files():
+    relative = path.relative_to(repo_root).as_posix()
+    text = path.read_text(errors="strict")
+    if re.search(r":\s*GitEvidenceExecuting\b", text):
+        if relative not in allowed_git_executor_impl:
+            fail("GitEvidenceExecuting adapter escaped Pearcleaner/Logic/ProjectScanner")
+    if "GitEvidencePlatformAdapter" in text and relative not in allowed_git_executor_impl:
+        fail("GitEvidencePlatformAdapter escaped its exact allowlist")
+    if re.search(r"\bimport\s+GitEvidenceShared\b", text):
+        if relative not in allowed_git_evidence_shared_pearcleaner:
+            fail("GitEvidenceShared import escaped ProjectScanner adapter seam")
+    if re.search(r"\bGitEvidenceXPCClient\b", text):
+        if relative not in allowed_git_xpc_client_pearcleaner:
+            fail("GitEvidenceXPCClient escaped ProjectScanner adapter seam")
+
+for path, text in test_text.items():
+    relative = relative_tests[path]
+    if re.search(r":\s*GitEvidenceExecuting\b", text):
+        if relative not in allowed_git_executor_test_stubs:
+            fail("GitEvidenceExecuting test stub escaped its exact allowlist")
 PY
 
 if [[ -n "$PRODUCTS_DIR" ]]; then

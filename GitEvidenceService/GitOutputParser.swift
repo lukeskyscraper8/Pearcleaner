@@ -1,0 +1,8 @@
+import Foundation
+import GitEvidenceShared
+
+typealias GitOutputParser = GitEvidenceShared.GitOutputParser
+typealias GitOutputParserError = GitEvidenceShared.GitOutputParserError
+typealias GitLsTreeRecord = GitEvidenceShared.GitLsTreeRecord
+typealias GitCatFileBatchHeader = GitEvidenceShared.GitCatFileBatchHeader
+typealias GitCatFileBatchHeaderParser = GitEvidenceShared.GitCatFileBatchHeaderParser

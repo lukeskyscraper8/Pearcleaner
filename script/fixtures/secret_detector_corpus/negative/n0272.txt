@@ -1,0 +1,1 @@
+# Example: AKIA followed by only fifteen characters AKIA123456789012 // negative-272
