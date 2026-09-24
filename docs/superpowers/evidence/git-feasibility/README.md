@@ -76,10 +76,22 @@ Run from the repository root:
 script/git_evidence_feasibility_run.sh
 ```
 
+For evidence that counts for the gate, notarize the harness as part of the run. Once per Mac, store notary credentials in the keychain (it asks for an app-specific password from appleid.apple.com):
+
+```bash
+xcrun notarytool store-credentials pearcleaner-notary --apple-id <your Apple ID> --team-id 68583N3MNF
+```
+
+Then run:
+
+```bash
+GIT_FEASIBILITY_NOTARY_PROFILE=pearcleaner-notary script/git_evidence_feasibility_run.sh
+```
+
 The script:
 
 1. Builds `GitFeasibilityHarness Release`.
-2. Rejects ad-hoc or unsigned Release bundles.
+2. Rejects ad-hoc or unsigned Release bundles, and notarizes and staples the harness when `GIT_FEASIBILITY_NOTARY_PROFILE` is set.
 3. Runs the harness with `GIT_FEASIBILITY_OUTPUT` pointed at a staging directory.
 4. Archives the staged evidence into this directory using the `<os-build-family>-<architecture>` tuple name from `manifest.json`.
 

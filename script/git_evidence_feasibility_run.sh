@@ -42,6 +42,45 @@ verify_codesign_not_adhoc() {
     /usr/bin/codesign --verify --deep --strict --verbose=2 "$app_path"
 }
 
+# Spec 10.5 gate evidence must come from a notarized build. Set
+# GIT_FEASIBILITY_NOTARY_PROFILE to a notarytool keychain profile (created once
+# with `xcrun notarytool store-credentials`) to notarize and staple the harness
+# before it runs. Without it the run still works but can't count for the gate.
+notarize_harness() {
+    local profile="$1"
+    local zip_path="$ROOT/.build/GitFeasibilityHarness-notarize.zip"
+    local result_path="$ROOT/.build/GitFeasibilityHarness-notarize.json"
+
+    echo "Submitting the harness for notarization (keychain profile: $profile)..."
+    rm -f "$zip_path" "$result_path"
+    /usr/bin/ditto -c -k --keepParent "$APP_PATH" "$zip_path"
+    if ! /usr/bin/xcrun notarytool submit "$zip_path" \
+        --keychain-profile "$profile" \
+        --wait \
+        --output-format json >"$result_path"; then
+        cat "$result_path" >&2 || true
+        fail "notarytool submit failed" 1
+    fi
+
+    local submission_status
+    submission_status="$(/usr/bin/python3 - "$result_path" <<'PY'
+import json
+import sys
+
+with open(sys.argv[1], "r", encoding="utf-8") as handle:
+    result = json.load(handle)
+print(f"{result.get('status', 'unknown')} {result.get('id', '')}")
+PY
+)"
+    rm -f "$zip_path"
+    if [[ "${submission_status%% *}" != "Accepted" ]]; then
+        fail "notarization was not accepted (${submission_status}); see: xcrun notarytool log ${submission_status#* } --keychain-profile $profile" 1
+    fi
+
+    /usr/bin/xcrun stapler staple "$APP_PATH"
+    echo "Harness notarized and stapled."
+}
+
 read_manifest_field() {
     local manifest_path="$1"
     local field_name="$2"
@@ -206,6 +245,12 @@ xcodebuild -quiet \
     build
 
 verify_codesign_not_adhoc "$APP_PATH"
+
+if [[ -n "${GIT_FEASIBILITY_NOTARY_PROFILE:-}" ]]; then
+    notarize_harness "$GIT_FEASIBILITY_NOTARY_PROFILE"
+else
+    echo "GIT_FEASIBILITY_NOTARY_PROFILE is not set, so the harness is not notarized; this run can't count as gate evidence."
+fi
 
 if [[ ! -x "$EXECUTABLE_PATH" ]]; then
     fail "harness executable not found: $EXECUTABLE_PATH" 66
