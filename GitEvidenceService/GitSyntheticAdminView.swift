@@ -42,8 +42,12 @@ struct GitSyntheticAdminView: Sendable {
         let workTreeURL = rootTemporaryURL.appendingPathComponent("worktree", isDirectory: true)
         let objectsDirectoryURL = gitDirectoryURL.appendingPathComponent("objects", isDirectory: true)
         let packDirectoryURL = objectsDirectoryURL.appendingPathComponent("pack", isDirectory: true)
+        // Git only treats GIT_DIR as a repository when it has HEAD, objects/
+        // and refs/, even though these operations never read a ref.
+        let refsDirectoryURL = gitDirectoryURL.appendingPathComponent("refs", isDirectory: true)
 
         try fileManager.createDirectory(at: gitDirectoryURL, withIntermediateDirectories: true)
+        try fileManager.createDirectory(at: refsDirectoryURL, withIntermediateDirectories: true)
         try fileManager.createDirectory(at: workTreeURL, withIntermediateDirectories: true)
         try fileManager.createDirectory(at: objectsDirectoryURL, withIntermediateDirectories: true)
         try fileManager.createDirectory(at: packDirectoryURL, withIntermediateDirectories: true)
