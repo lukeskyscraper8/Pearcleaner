@@ -36,8 +36,17 @@ enum SandboxDenialScenarioSupport {
         let siblingUserData = scenarioDirectory.appendingPathComponent("sibling-user-canary.txt")
         try "sibling-user-canary\n".write(to: siblingUserData, atomically: true, encoding: .utf8)
 
-        let pearcleanerPrivateState = FileManager.default.homeDirectoryForCurrentUser
-            .appendingPathComponent("Library/Containers/com.lukerow.Pearcleaner/Data/private-canary.txt")
+        // Pearcleaner isn't sandboxed, so its private state lives in
+        // ~/Library/Application Support/Pearcleaner (see UndoHistoryManager).
+        // The canary must exist, or a denial can't be told from ENOENT.
+        let pearcleanerStateDirectory = try FileManager.default
+            .url(for: .applicationSupportDirectory, in: .userDomainMask, appropriateFor: nil, create: false)
+            .appendingPathComponent("Pearcleaner", isDirectory: true)
+        try FileManager.default.createDirectory(at: pearcleanerStateDirectory, withIntermediateDirectories: true)
+        let pearcleanerPrivateState = pearcleanerStateDirectory
+            .appendingPathComponent("git-feasibility-canary-\(UUID().uuidString).txt")
+        try "pearcleaner-private-canary\n".write(to: pearcleanerPrivateState, atomically: true, encoding: .utf8)
+        defer { try? FileManager.default.removeItem(at: pearcleanerPrivateState) }
 
         let metadataWriteTarget = repositoryRoot.appendingPathComponent(".git/index")
         let projectExecutable = repositoryRoot.appendingPathComponent("project-controlled.sh")

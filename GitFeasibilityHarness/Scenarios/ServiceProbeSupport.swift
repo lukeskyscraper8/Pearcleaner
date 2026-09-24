@@ -1,3 +1,4 @@
+import Darwin
 import Foundation
 import GitEvidenceShared
 
@@ -82,11 +83,22 @@ enum ServiceProbeSupport {
         #endif
     }
 
-    /// True when a probe ran to completion and reported a denied syscall.
+    /// True when a probe ran to completion and the sandbox refused the call.
+    /// A missing target (ENOENT) doesn't count: it proves nothing about the
+    /// sandbox, so every probe target has to exist.
     static func probeWasDenied(_ result: ServiceProbeResult, marker: String) -> Bool {
-        result.completed
-            && result.exitCode == 0
-            && result.stderr.contains("\(marker)=")
-            && !result.stderr.contains("\(marker)=0")
+        guard result.completed, result.exitCode == 0,
+              let errnoValue = reportedErrno(in: result.stderr, marker: marker) else {
+            return false
+        }
+        return [EPERM, EACCES, EROFS, ENETDOWN].contains(errnoValue)
+    }
+
+    private static func reportedErrno(in stderr: String, marker: String) -> Int32? {
+        let prefix = "\(marker)="
+        for line in stderr.split(whereSeparator: \.isNewline) where line.hasPrefix(prefix) {
+            return Int32(line.dropFirst(prefix.count))
+        }
+        return nil
     }
 }
