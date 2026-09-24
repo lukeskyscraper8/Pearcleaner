@@ -42,6 +42,45 @@ verify_codesign_not_adhoc() {
     /usr/bin/codesign --verify --deep --strict --verbose=2 "$app_path"
 }
 
+# Spec 10.5 gate evidence must come from a notarized build. Set
+# GIT_FEASIBILITY_NOTARY_PROFILE to a notarytool keychain profile (created once
+# with `xcrun notarytool store-credentials`) to notarize and staple the harness
+# before it runs. Without it the run still works but can't count for the gate.
+notarize_harness() {
+    local profile="$1"
+    local zip_path="$ROOT/.build/GitFeasibilityHarness-notarize.zip"
+    local result_path="$ROOT/.build/GitFeasibilityHarness-notarize.json"
+
+    echo "Submitting the harness for notarization (keychain profile: $profile)..."
+    rm -f "$zip_path" "$result_path"
+    /usr/bin/ditto -c -k --keepParent "$APP_PATH" "$zip_path"
+    if ! /usr/bin/xcrun notarytool submit "$zip_path" \
+        --keychain-profile "$profile" \
+        --wait \
+        --output-format json >"$result_path"; then
+        cat "$result_path" >&2 || true
+        fail "notarytool submit failed" 1
+    fi
+
+    local submission_status
+    submission_status="$(/usr/bin/python3 - "$result_path" <<'PY'
+import json
+import sys
+
+with open(sys.argv[1], "r", encoding="utf-8") as handle:
+    result = json.load(handle)
+print(f"{result.get('status', 'unknown')} {result.get('id', '')}")
+PY
+)"
+    rm -f "$zip_path"
+    if [[ "${submission_status%% *}" != "Accepted" ]]; then
+        fail "notarization was not accepted (${submission_status}); see: xcrun notarytool log ${submission_status#* } --keychain-profile $profile" 1
+    fi
+
+    /usr/bin/xcrun stapler staple "$APP_PATH"
+    echo "Harness notarized and stapled."
+}
+
 read_manifest_field() {
     local manifest_path="$1"
     local field_name="$2"
@@ -56,6 +95,69 @@ value = manifest.get(field_name)
 if value is None:
     raise SystemExit(f"missing manifest field: {field_name}")
 print(value)
+PY
+}
+
+# Saves what macOS logged about the harness, service and runner during a run
+# (unified log lines and crash reports) outside the archived evidence, and
+# prints the lines that usually explain a failure.
+capture_system_diagnostics() {
+    local architecture="$1"
+    local started_marker="$2"
+    local started_at="$3"
+    local diagnostics_dir="$ROOT/.build/feasibility-diagnostics/$architecture"
+
+    rm -rf "$diagnostics_dir"
+    mkdir -p "$diagnostics_dir"
+
+    /usr/bin/log show --style compact --start "$started_at" --predicate \
+        'process IN {"GitEvidenceService", "GitRunner", "GitFeasibilityHarness"} OR eventMessage CONTAINS "GitEvidenceService" OR eventMessage CONTAINS "GitRunner" OR eventMessage CONTAINS "GitFeasibilityHarness"' \
+        > "$diagnostics_dir/system.log" 2>&1 || true
+
+    local report
+    while IFS= read -r report; do
+        cp "$report" "$diagnostics_dir/" 2>/dev/null || true
+    done < <(find "$HOME/Library/Logs/DiagnosticReports" -maxdepth 1 -type f \
+        \( -name 'GitRunner*' -o -name 'GitEvidenceService*' -o -name 'GitFeasibilityHarness*' \) \
+        -newer "$started_marker" 2>/dev/null)
+
+    echo "Diagnostics for ${architecture} saved to $diagnostics_dir"
+    echo "--- key log lines (${architecture}) ---"
+    /usr/bin/grep -h -i -E 'deny|sandbox|reject|requirement|invalid|interrupt|crash|signal|entitlement' \
+        "$diagnostics_dir/system.log" 2>/dev/null | /usr/bin/head -40 || true
+    local crash_report
+    for crash_report in "$diagnostics_dir"/*.ips; do
+        [[ -f "$crash_report" ]] || continue
+        echo "--- crash report $(basename "$crash_report") ---"
+        /usr/bin/grep -h -E '"(procName|indicator|reasons|exception|type|signal|namespace)"' "$crash_report" \
+            | /usr/bin/head -12 || true
+    done
+    echo "--- end of key lines ---"
+}
+
+# Spec 10.5 only accepts evidence from Developer ID signed, notarized
+# products. Say plainly whether this run qualifies.
+print_signing_summary() {
+    /usr/bin/python3 - "$1" <<'PY'
+import json
+import sys
+
+with open(sys.argv[1], "r", encoding="utf-8") as handle:
+    manifest = json.load(handle)
+production = True
+for key in ("harnessSignature", "serviceSignature", "runnerSignature"):
+    signature = manifest.get(key)
+    if not signature:
+        print(f"{key}: not recorded")
+        production = False
+        continue
+    print(
+        f"{key}: {signature['identifier']} team={signature['teamIdentifier']}"
+        f" developerID={signature['developerIDSigned']} notarized={signature['notarized']}"
+        f" ({signature['leafAuthority']})"
+    )
+    production = production and signature["developerIDSigned"] and signature["notarized"]
+print("Production-signed evidence: " + ("yes" if production else "no (not valid for the gate)"))
 PY
 }
 
@@ -77,6 +179,11 @@ run_harness_for_architecture() {
         fi
     fi
 
+    local started_marker
+    started_marker="$(mktemp "${TMPDIR:-/tmp}/git-feasibility-started.XXXXXX")"
+    local started_at
+    started_at="$(date '+%Y-%m-%d %H:%M:%S')"
+
     echo "Running Git feasibility harness for ${architecture}..."
     set +e
     if ((${#launch_prefix[@]})); then
@@ -89,6 +196,8 @@ run_harness_for_architecture() {
             "$EXECUTABLE_PATH"
     fi
     local harness_exit=$?
+    capture_system_diagnostics "$architecture" "$started_marker" "$started_at"
+    rm -f "$started_marker"
 
     local manifest_path="$staging_root/manifest.json"
     if [[ ! -f "$manifest_path" ]]; then
@@ -110,6 +219,7 @@ run_harness_for_architecture() {
     cp -R "$staging_root/." "$tuple_dir/"
 
     echo "Archived feasibility evidence to $tuple_dir"
+    print_signing_summary "$tuple_dir/manifest.json"
     echo "Harness exit code (${architecture}): $harness_exit"
 
     return "$harness_exit"
@@ -120,6 +230,8 @@ require_command codesign
 require_command python3
 require_command git
 
+# GIT_FEASIBILITY_HARNESS compiles the service's probe endpoint and the
+# runner's sandbox probes into this build only; shipping builds never have them.
 echo "Building signed Git feasibility harness (Release)..."
 xcodebuild -quiet \
     -project "$ROOT/Pearcleaner.xcodeproj" \
@@ -129,9 +241,16 @@ xcodebuild -quiet \
     -derivedDataPath "$DERIVED_DATA" \
     -clonedSourcePackagesDirPath "$SOURCE_PACKAGES" \
     -disableAutomaticPackageResolution \
+    SWIFT_ACTIVE_COMPILATION_CONDITIONS='$(inherited) GIT_FEASIBILITY_HARNESS' \
     build
 
 verify_codesign_not_adhoc "$APP_PATH"
+
+if [[ -n "${GIT_FEASIBILITY_NOTARY_PROFILE:-}" ]]; then
+    notarize_harness "$GIT_FEASIBILITY_NOTARY_PROFILE"
+else
+    echo "GIT_FEASIBILITY_NOTARY_PROFILE is not set, so the harness is not notarized; this run can't count as gate evidence."
+fi
 
 if [[ ! -x "$EXECUTABLE_PATH" ]]; then
     fail "harness executable not found: $EXECUTABLE_PATH" 66

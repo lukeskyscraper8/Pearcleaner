@@ -149,12 +149,21 @@ public enum GitOutputParser {
 public struct GitCatFileBatchHeaderParser: Sendable {
     private let expectedOIDs: [String]
     private let hashAlgorithm: GitEvidenceXPCObjectHashAlgorithm
+    private let payloadsIncluded: Bool
     private var buffer = Data()
     private var parsedCount = 0
 
-    public init(expectedOIDs: [String], hashAlgorithm: GitEvidenceXPCObjectHashAlgorithm) throws {
+    /// `payloadsIncluded` is false for the service's stdout, where the
+    /// supervisor has already moved each object's bytes (and the newline
+    /// that follows them) to the blob pipe, leaving only header lines.
+    public init(
+        expectedOIDs: [String],
+        hashAlgorithm: GitEvidenceXPCObjectHashAlgorithm,
+        payloadsIncluded: Bool = true
+    ) throws {
         self.expectedOIDs = expectedOIDs
         self.hashAlgorithm = hashAlgorithm
+        self.payloadsIncluded = payloadsIncluded
 
         for oid in expectedOIDs {
             try GitOutputParser.validateOID(oid, hashAlgorithm: hashAlgorithm)
@@ -216,7 +225,7 @@ public struct GitCatFileBatchHeaderParser: Sendable {
                 throw GitOutputParserError.malformedRecord
             }
 
-            let payloadByteCount = Int(size) + 1
+            let payloadByteCount = payloadsIncluded ? Int(size) + 1 : 0
             let totalRecordByteCount = headerByteCount + payloadByteCount
             guard buffer.count >= totalRecordByteCount else {
                 break

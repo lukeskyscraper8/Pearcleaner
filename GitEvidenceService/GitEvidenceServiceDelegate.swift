@@ -6,21 +6,21 @@ final class GitEvidenceServiceDelegate: NSObject, NSXPCListenerDelegate, GitEvid
     func listener(_ listener: NSXPCListener, shouldAcceptNewConnection newConnection: NSXPCConnection) -> Bool {
         _ = listener
 
-        guard GitEvidenceCodesignValidation.clientIsAllowlisted(pid: newConnection.processIdentifier) else {
-            fputs(
-                "GitEvidenceService rejected client pid=\(newConnection.processIdentifier)\n",
-                stderr
-            )
-            return false
-        }
+        // Pin the client through the XPC runtime's audit-token check, as
+        // PearcleanerHelper does, rather than a racy pid-based lookup.
+        GitEvidenceCodesignValidation.applyClientRequirement(to: newConnection)
 
+        #if GIT_FEASIBILITY_HARNESS
+        let interface = GitEvidenceXPCHarnessInterface.make()
+        #else
         let interface = NSXPCInterface(with: GitEvidenceXPCProtocol.self)
         GitEvidenceXPCInterfaceConfigurator.apply(to: interface, isRemote: false)
+        #endif
         newConnection.exportedInterface = interface
         newConnection.exportedObject = self
-        newConnection.invalidationHandler = {
-            exit(0)
-        }
+        // Don't exit when a connection closes: the service keeps no state
+        // between requests, and exiting can interrupt a new connection launchd
+        // has already routed to this process. launchd ends idle services.
         newConnection.resume()
         return true
     }
@@ -34,6 +34,11 @@ final class GitEvidenceServiceDelegate: NSObject, NSXPCListenerDelegate, GitEvid
                 GitEvidenceXPCReply(
                     result: GitEvidenceXPCOperationResult(status: status(for: validationError))
                 ),
+                nil
+            )
+        } catch let adminViewError as GitSyntheticAdminViewError where adminViewError.isMalformedRequest {
+            reply(
+                GitEvidenceXPCReply(result: GitEvidenceXPCOperationResult(status: .invalidRequest)),
                 nil
             )
         } catch {
@@ -175,7 +180,8 @@ final class GitEvidenceServiceDelegate: NSObject, NSXPCListenerDelegate, GitEvid
         case .catFileBatch:
             var parser = try GitCatFileBatchHeaderParser(
                 expectedOIDs: catFileObjectHexes,
-                hashAlgorithm: hashAlgorithm
+                hashAlgorithm: hashAlgorithm,
+                payloadsIncluded: false
             )
             _ = try parser.append(stdout)
             try parser.finish()
@@ -232,5 +238,54 @@ final class GitEvidenceServiceDelegate: NSObject, NSXPCListenerDelegate, GitEvid
         }
 
         throw POSIXError(.ENOENT)
+    }
+}
+
+#if GIT_FEASIBILITY_HARNESS
+extension GitEvidenceServiceDelegate: GitEvidenceXPCHarnessProtocol {
+    func runHarnessProbe(_ arguments: [String], reply: @escaping (String, Int32, Data) -> Void) {
+        guard let probe = arguments.first,
+              GitEvidenceXPCHarnessInterface.probeArguments.contains(probe) else {
+            reply(GitEvidenceXPCOperationStatus.invalidRequest.rawValue, -1, Data())
+            return
+        }
+
+        do {
+            let servicePaths = try makeServicePaths()
+            let probeView = try GitSyntheticAdminView.buildProbeView(
+                serviceHome: servicePaths.home,
+                serviceTemporaryDirectory: servicePaths.temporary
+            )
+            defer { probeView.destroy() }
+
+            let result = try GitOperationSupervisor.runHarnessProbe(
+                arguments: arguments,
+                runnerExecutableURL: try embeddedRunnerURL(),
+                adminView: probeView
+            )
+            let status: GitEvidenceXPCOperationStatus = switch result.terminationReason {
+            case .timedOut: .timedOut
+            case .outputLimitExceeded: .outputLimitExceeded
+            case .exited, .signal: .accepted
+            }
+            reply(status.rawValue, result.exitCode, result.stderr)
+        } catch {
+            reply(
+                GitEvidenceXPCOperationStatus.operationFailed.rawValue,
+                -1,
+                Data(String(describing: error).utf8)
+            )
+        }
+    }
+}
+#endif
+
+private extension GitSyntheticAdminViewError {
+    /// True when the request itself is malformed, as opposed to a service fault.
+    var isMalformedRequest: Bool {
+        if case .filesystemFailure = self {
+            return false
+        }
+        return true
     }
 }

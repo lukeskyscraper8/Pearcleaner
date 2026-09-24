@@ -98,12 +98,15 @@ struct DescriptorTransferScenario: FeasibilityScenario {
 
         let accepted = GitEvidenceXPCOperationStatus(rawValue: result.status) == .accepted
         let blobPipeProvided = result.blobPipeReadHandle != nil
-        let passed = accepted && readOnlyPreserved && identityPreserved && blobPipeProvided
+        // list_cached_paths never returns a blob pipe; that is the cat-file
+        // scenario's job, so it is logged here but not required.
+        let passed = accepted && readOnlyPreserved && identityPreserved
 
         let logLines = [
             "service=\(serviceURL.path)",
             "repository_root=\(repositoryRoot.path)",
             "transfer_status=\(result.status)",
+            "stderr_preview=\(String(data: result.stderrPreview, encoding: .utf8) ?? "")",
             "read_only_preserved=\(readOnlyPreserved)",
             "identity_preserved=\(identityPreserved)",
             "blob_pipe_provided=\(blobPipeProvided)",

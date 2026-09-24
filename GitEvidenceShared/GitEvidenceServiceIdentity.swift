@@ -16,4 +16,9 @@ public enum GitEvidenceServiceIdentity {
         pearcleanerClientRequirement,
         harnessClientRequirement,
     ]
+
+    /// One requirement accepting any allowlisted client, for
+    /// `NSXPCConnection.setCodeSigningRequirement(_:)`.
+    public static let acceptedClientRequirement: String =
+        acceptedClientRequirements.map { "(\($0))" }.joined(separator: " or ")
 }

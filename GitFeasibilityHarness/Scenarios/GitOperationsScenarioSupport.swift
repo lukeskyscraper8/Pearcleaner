@@ -112,7 +112,7 @@ enum GitOperationsScenarioSupport {
         if let capturedError {
             throw FeasibilityScenarioFailure.scenarioFailed(
                 .lsFilesOperation,
-                reason: capturedError.localizedDescription
+                reason: "\(capturedError.domain) \(capturedError.code): \(capturedError.localizedDescription)"
             )
         }
 

@@ -19,7 +19,7 @@ struct SandboxDenialProbeResult: Sendable {
 
 enum SandboxDenialScenarioSupport {
     static func embeddedRunnerURL(bundle: Bundle = .main) throws -> URL {
-        try GitTransitionScenarioSupport.embeddedRunnerURL(bundle: bundle)
+        try ServiceProbeSupport.serviceRunnerURL(bundle: bundle)
     }
 
     static func runnerSandboxEnforcementExpected(at runnerURL: URL) -> Bool {
@@ -27,33 +27,31 @@ enum SandboxDenialScenarioSupport {
     }
 
     static func runDenialMatrix(
-        runnerURL: URL,
         scenarioDirectory: URL,
         repositoryRoot: URL
     ) throws -> [SandboxDenialProbeResult] {
-        let serviceHome = scenarioDirectory.appendingPathComponent("service-home", isDirectory: true)
-        let serviceTemporaryDirectory = scenarioDirectory.appendingPathComponent("service-tmp", isDirectory: true)
-        try FileManager.default.createDirectory(at: serviceHome, withIntermediateDirectories: true)
-        try FileManager.default.createDirectory(at: serviceTemporaryDirectory, withIntermediateDirectories: true)
-
         let workingTreeCanary = repositoryRoot.appendingPathComponent("working-tree-canary.txt")
         try "working-tree-canary\n".write(to: workingTreeCanary, atomically: true, encoding: .utf8)
 
         let siblingUserData = scenarioDirectory.appendingPathComponent("sibling-user-canary.txt")
         try "sibling-user-canary\n".write(to: siblingUserData, atomically: true, encoding: .utf8)
 
-        let pearcleanerPrivateState = FileManager.default.homeDirectoryForCurrentUser
-            .appendingPathComponent("Library/Containers/com.lukerow.Pearcleaner/Data/private-canary.txt")
+        // Pearcleaner isn't sandboxed, so its private state lives in
+        // ~/Library/Application Support/Pearcleaner (see UndoHistoryManager).
+        // The canary must exist, or a denial can't be told from ENOENT.
+        let pearcleanerStateDirectory = try FileManager.default
+            .url(for: .applicationSupportDirectory, in: .userDomainMask, appropriateFor: nil, create: false)
+            .appendingPathComponent("Pearcleaner", isDirectory: true)
+        try FileManager.default.createDirectory(at: pearcleanerStateDirectory, withIntermediateDirectories: true)
+        let pearcleanerPrivateState = pearcleanerStateDirectory
+            .appendingPathComponent("git-feasibility-canary-\(UUID().uuidString).txt")
+        try "pearcleaner-private-canary\n".write(to: pearcleanerPrivateState, atomically: true, encoding: .utf8)
+        defer { try? FileManager.default.removeItem(at: pearcleanerPrivateState) }
 
         let metadataWriteTarget = repositoryRoot.appendingPathComponent(".git/index")
         let projectExecutable = repositoryRoot.appendingPathComponent("project-controlled.sh")
         try "#!/bin/sh\nexit 0\n".write(to: projectExecutable, atomically: true, encoding: .utf8)
         try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: projectExecutable.path)
-
-        let environment = [
-            "HOME": serviceHome.path,
-            "TMPDIR": serviceTemporaryDirectory.path,
-        ]
 
         let probes: [(SandboxDenialProbeKind, [String])] = [
             (.workingTreeCanary, [GitRunnerInvocation.openProbeArgument, workingTreeCanary.path]),
@@ -64,20 +62,13 @@ enum SandboxDenialScenarioSupport {
             (.networkAccess, [GitRunnerInvocation.connectProbeArgument, "1.1.1.1", "443"]),
         ]
 
-        return try probes.map { kind, gitArguments in
-            let result = try GitTransitionScenarioSupport.spawnGitRunner(
-                executableURL: runnerURL,
-                gitArguments: gitArguments,
-                environment: environment,
-                inheritedMetadataDescriptors: []
-            )
-            let stderr = String(data: result.stderr, encoding: .utf8) ?? ""
-            let denied = probeWasDenied(kind: kind, exitCode: result.terminationStatus, stderr: stderr)
+        return try probes.map { kind, probeArguments in
+            let result = try ServiceProbeSupport.runProbe(probeArguments)
             return SandboxDenialProbeResult(
                 kind: kind,
-                denied: denied,
-                exitCode: result.terminationStatus,
-                stderr: stderr
+                denied: ServiceProbeSupport.probeWasDenied(result, marker: marker(for: kind)),
+                exitCode: result.exitCode,
+                stderr: result.completed ? result.stderr : "status=\(result.status) \(result.stderr)"
             )
         }
     }
@@ -86,24 +77,16 @@ enum SandboxDenialScenarioSupport {
         try GitTransitionScenarioSupport.createInlineMinimalRepository()
     }
 
-    private static func probeWasDenied(
-        kind: SandboxDenialProbeKind,
-        exitCode: Int32,
-        stderr: String
-    ) -> Bool {
-        guard exitCode == 0 else {
-            return false
-        }
-
+    private static func marker(for kind: SandboxDenialProbeKind) -> String {
         switch kind {
         case .workingTreeCanary, .siblingUserData, .pearcleanerPrivateState:
-            return stderr.contains("probe_open_errno=") && !stderr.contains("probe_open_errno=0")
+            "probe_open_errno"
         case .metadataWrite:
-            return stderr.contains("probe_write_errno=") && !stderr.contains("probe_write_errno=0")
+            "probe_write_errno"
         case .projectExecutableLaunch:
-            return stderr.contains("probe_exec_errno=") && !stderr.contains("probe_exec_errno=0")
+            "probe_exec_errno"
         case .networkAccess:
-            return stderr.contains("probe_connect_errno=") && !stderr.contains("probe_connect_errno=0")
+            "probe_connect_errno"
         }
     }
 }

@@ -6,6 +6,7 @@ import Security
 public enum GitRunnerError: Error, Sendable, Equatable {
     case emptyGitArguments
     case invalidGitLaunchPath
+    case appleGitNotFound
     case invalidFileDescriptorList
     case fileDescriptorOperationFailed(Int32)
     case missingRequiredEnvironment(String)
@@ -18,7 +19,9 @@ public enum GitRunnerError: Error, Sendable, Equatable {
         case .emptyGitArguments:
             "GitRunner requires at least one Git argument"
         case .invalidGitLaunchPath:
-            "Git launch path must be the fixed system path"
+            "Git launch path must be an allowlisted Apple developer-tools path"
+        case .appleGitNotFound:
+            "Apple Git not found in Command Line Tools or Xcode"
         case .invalidFileDescriptorList:
             "Invalid GitRunner file-descriptor allowlist"
         case let .fileDescriptorOperationFailed(fd):
@@ -30,7 +33,7 @@ public enum GitRunnerError: Error, Sendable, Equatable {
         case let .signatureVerificationFailed(reason):
             "Apple Git signature verification failed: \(reason)"
         case let .execTransitionFailed(code):
-            "exec transition to /usr/bin/git failed with errno \(code)"
+            "exec transition to Apple Git failed with errno \(code)"
         }
     }
 
@@ -59,7 +62,7 @@ public enum GitRunnerError: Error, Sendable, Equatable {
 
 public struct GitRunnerProcessProfile: Sendable, Equatable {
     public static let version: String = GitRunnerInvocation.version
-    public static let gitLaunchPath: String = GitRunnerInvocation.gitLaunchPath
+    public static let gitLaunchPathCandidates: [String] = GitRunnerInvocation.gitLaunchPathCandidates
 
     public static let metadataFileDescriptorsEnvironmentKey = GitRunnerInvocation.metadataFileDescriptorsEnvironmentKey
     public static let pipeFileDescriptorsEnvironmentKey = GitRunnerInvocation.pipeFileDescriptorsEnvironmentKey
@@ -83,7 +86,10 @@ public struct GitRunnerProcessProfile: Sendable, Equatable {
             throw GitRunnerError.emptyGitArguments
         }
 
-        try verifyLaunchPathIsFixedSystemGit()
+        guard let gitLaunchPath = GitRunnerInvocation.resolvedGitLaunchPath() else {
+            throw GitRunnerError.appleGitNotFound
+        }
+        try verifyLaunchPathIsAllowlisted(gitLaunchPath)
         try GitRunnerSignatureVerifier.verifyAppleSignedGit(at: gitLaunchPath)
 
         let metadataDescriptors: [Int32]
@@ -181,8 +187,8 @@ public struct GitRunnerProcessProfile: Sendable, Equatable {
         return configured
     }
 
-    static func verifyLaunchPathIsFixedSystemGit() throws {
-        guard gitLaunchPath == "/usr/bin/git" else {
+    static func verifyLaunchPathIsAllowlisted(_ launchPath: String) throws {
+        guard gitLaunchPathCandidates.contains(launchPath) else {
             throw GitRunnerError.invalidGitLaunchPath
         }
     }
@@ -192,7 +198,7 @@ enum GitRunnerSignatureVerifier {
     private static let appleAnchorRequirement = "anchor apple"
 
     static func verifyAppleSignedGit(at launchPath: String) throws {
-        guard launchPath == GitRunnerProcessProfile.gitLaunchPath else {
+        guard GitRunnerProcessProfile.gitLaunchPathCandidates.contains(launchPath) else {
             throw GitRunnerError.invalidGitLaunchPath
         }
 
@@ -237,6 +243,7 @@ enum GitRunnerSignatureVerifier {
     }
 }
 
+#if GIT_FEASIBILITY_HARNESS
 enum GitRunnerHarnessProbe {
     static let openProbeArgument = GitRunnerInvocation.openProbeArgument
     static let writeProbeArgument = GitRunnerInvocation.writeProbeArgument
@@ -403,3 +410,4 @@ enum GitRunnerHarnessProbe {
         }
     }
 }
+#endif

@@ -55,6 +55,42 @@ public struct FeasibilityScenarioResult: Codable, Sendable, Equatable {
     }
 }
 
+/// Code-signing facts for one signed product the harness exercised. Spec
+/// §10.5 requires the allowlist tuple to record the app and runner
+/// signatures, and to accept only production-signed evidence.
+public struct FeasibilityCodeSignature: Codable, Sendable, Equatable {
+    public let identifier: String
+    public let teamIdentifier: String
+    /// Hex code-directory hash (kSecCodeInfoUnique).
+    public let cdhash: String
+    /// Leaf certificate summary, e.g. "Developer ID Application: …".
+    public let leafAuthority: String
+    /// Signed with a Developer ID Application certificate.
+    public let developerIDSigned: Bool
+    /// Satisfies the "notarized" code requirement.
+    public let notarized: Bool
+
+    public init(
+        identifier: String,
+        teamIdentifier: String,
+        cdhash: String,
+        leafAuthority: String,
+        developerIDSigned: Bool,
+        notarized: Bool
+    ) {
+        self.identifier = identifier
+        self.teamIdentifier = teamIdentifier
+        self.cdhash = cdhash
+        self.leafAuthority = leafAuthority
+        self.developerIDSigned = developerIDSigned
+        self.notarized = notarized
+    }
+
+    public var isProductionSigned: Bool {
+        developerIDSigned && notarized
+    }
+}
+
 public struct FeasibilityManifest: Codable, Sendable, Equatable {
     public let schemaVersion: UInt32
     public let pearcleanerVersion: String
@@ -66,6 +102,11 @@ public struct FeasibilityManifest: Codable, Sendable, Equatable {
     public let testTimestamp: Date
     public let overallStatus: FeasibilityOverallStatus
     public let scenarios: [FeasibilityScenarioResult]
+    /// Optional so manifests archived before signatures were recorded still
+    /// decode; such manifests can never count as production-signed.
+    public let harnessSignature: FeasibilityCodeSignature?
+    public let serviceSignature: FeasibilityCodeSignature?
+    public let runnerSignature: FeasibilityCodeSignature?
 
     public init(
         schemaVersion: UInt32 = FeasibilityManifestSchema.currentVersion,
@@ -77,7 +118,10 @@ public struct FeasibilityManifest: Codable, Sendable, Equatable {
         architecture: String,
         testTimestamp: Date,
         overallStatus: FeasibilityOverallStatus,
-        scenarios: [FeasibilityScenarioResult]
+        scenarios: [FeasibilityScenarioResult],
+        harnessSignature: FeasibilityCodeSignature? = nil,
+        serviceSignature: FeasibilityCodeSignature? = nil,
+        runnerSignature: FeasibilityCodeSignature? = nil
     ) {
         self.schemaVersion = schemaVersion
         self.pearcleanerVersion = pearcleanerVersion
@@ -89,6 +133,15 @@ public struct FeasibilityManifest: Codable, Sendable, Equatable {
         self.testTimestamp = testTimestamp
         self.overallStatus = overallStatus
         self.scenarios = scenarios
+        self.harnessSignature = harnessSignature
+        self.serviceSignature = serviceSignature
+        self.runnerSignature = runnerSignature
+    }
+
+    /// True only when every signed product in the run was Developer ID
+    /// signed and notarized, as spec §10.5 requires of gate evidence.
+    public var isProductionSigned: Bool {
+        [harnessSignature, serviceSignature, runnerSignature].allSatisfy { $0?.isProductionSigned == true }
     }
 
     public static func overallStatus(for scenarios: [FeasibilityScenarioResult]) -> FeasibilityOverallStatus {

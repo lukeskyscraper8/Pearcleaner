@@ -24,9 +24,9 @@ enum DescriptorTransferScenarioSupport {
         return root
     }
 
-  private static func minimalIndexFixture() -> Data {
-        // Generated from a one-file `git add tracked.txt` fixture repository.
-        Data(base64Encoded: "RElSQwAAAgAAAGqMjEsfz2qMjEsfzwEAAgBXzhgAAACRpAAAAfUAAAAUAAAAEMp5qduRWKYT0qq6XcHzOVdiEhoAC3RyYWNrZWQudHh0AAAAAAAAezJePwTOkg==")!
+    private static func minimalIndexFixture() -> Data {
+        // The index from minimal-repo-fixture.json: one tracked.txt entry.
+        Data(base64Encoded: "RElSQwAAAAIAAAABaowtOBhcHbJqjCyXLDwM4QEAABIFduYnAACBpAAAAfUAAAAUAAAAEMp5qduRWKbjFNKqulwc8zlXYhIaAAt0cmFja2VkLnR4dAAAAAAAAABUUkVFAAAAGQAxIDAKbdo3Ag/eIGAk0N3HPK7FMt976HTMVP2i2Wzr1Pacu4Ar9Jmxm/rqZQ==")!
     }
 
     static func openReadOnlyDescriptor(for url: URL) throws -> Int32 {
@@ -62,11 +62,13 @@ enum DescriptorTransferScenarioSupport {
             objectHashAlgorithm: .sha1,
             transferredDescriptors: []
         )
+        // The ping carries no index descriptor, so a reachable service must
+        // answer invalid_request rather than run Git.
         let pingResult = try perform(request: pingRequest, serviceURL: serviceURL)
-        guard GitEvidenceXPCOperationStatus(rawValue: pingResult.status) == .accepted else {
+        guard GitEvidenceXPCOperationStatus(rawValue: pingResult.status) == .invalidRequest else {
             throw FeasibilityScenarioFailure.scenarioFailed(
                 .descriptorTransfer,
-                reason: "GitEvidenceService ping rejected with status \(pingResult.status)"
+                reason: "GitEvidenceService ping returned status \(pingResult.status), expected invalid_request"
             )
         }
 
@@ -122,7 +124,7 @@ enum DescriptorTransferScenarioSupport {
         if let capturedError {
             throw FeasibilityScenarioFailure.scenarioFailed(
                 .descriptorTransfer,
-                reason: capturedError.localizedDescription
+                reason: "\(capturedError.domain) \(capturedError.code): \(capturedError.localizedDescription)"
             )
         }
 
