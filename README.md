@@ -129,7 +129,7 @@ brew install --cask pearcleaner
 
 ## Building from Source
 
-The project requires Xcode with the macOS 26 SDK. Open `Pearcleaner.xcodeproj` and use the `Pearcleaner Debug` scheme, or perform an unsigned compile check:
+The project requires Xcode with the macOS 26 SDK. To build, install and reset a single development copy without leaving leftovers on your Mac, see [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md). Otherwise open `Pearcleaner.xcodeproj` and use the `Pearcleaner Debug` scheme, or perform an unsigned compile check:
 
 ```sh
 xcodebuild \
