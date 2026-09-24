@@ -442,7 +442,9 @@ enum GitOperationSupervisor {
                     continue
                 }
 
-                while pending.count < contentSize, !shouldStop.isStopped {
+                // cat-file --batch follows each object's bytes with a newline.
+                let recordSize = contentSize + 1
+                while pending.count < recordSize, !shouldStop.isStopped {
                     let readCount = buffer.withUnsafeMutableBytes { rawBuffer in
                         read(descriptor, rawBuffer.baseAddress, rawBuffer.count)
                     }
@@ -452,12 +454,13 @@ enum GitOperationSupervisor {
                     pending.append(contentsOf: buffer.prefix(readCount))
                 }
 
-                guard pending.count >= contentSize else {
+                guard pending.count >= recordSize,
+                      pending[pending.index(pending.startIndex, offsetBy: contentSize)] == 0x0A else {
                     return false
                 }
 
                 let blobBytes = pending.prefix(contentSize)
-                pending.removeFirst(contentSize)
+                pending.removeFirst(recordSize)
 
                 if let blobPipeWriteFD, blobPipeWriteFD >= 0 {
                     writeAll(Data(blobBytes), to: blobPipeWriteFD)

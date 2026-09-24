@@ -78,4 +78,34 @@ final class GitOutputParserTests: XCTestCase {
         XCTAssertEqual(headers[1].size, 5)
         try parser.finish()
     }
+
+    func testParsesHeaderOnlyCatFileOutput() throws {
+        let firstOID = String(repeating: "1", count: 40)
+        let secondOID = String(repeating: "2", count: 40)
+        let chunk = Data("\(firstOID) blob 5\u{0A}\(secondOID) blob 7\u{0A}".utf8)
+
+        var parser = try GitCatFileBatchHeaderParser(
+            expectedOIDs: [firstOID, secondOID],
+            hashAlgorithm: .sha1,
+            payloadsIncluded: false
+        )
+        let headers = try parser.append(chunk)
+
+        XCTAssertEqual(headers.map(\.size), [5, 7])
+        try parser.finish()
+    }
+
+    func testHeaderOnlyCatFileOutputRejectsLeftoverPayload() throws {
+        let oid = String(repeating: "1", count: 40)
+        var parser = try GitCatFileBatchHeaderParser(
+            expectedOIDs: [oid],
+            hashAlgorithm: .sha1,
+            payloadsIncluded: false
+        )
+        _ = try parser.append(Data("\(oid) blob 5\u{0A}hello\u{0A}".utf8))
+
+        XCTAssertThrowsError(try parser.finish()) { error in
+            XCTAssertEqual(error as? GitOutputParserError, .unexpectedTrailingData)
+        }
+    }
 }

@@ -176,7 +176,8 @@ final class GitEvidenceServiceDelegate: NSObject, NSXPCListenerDelegate, GitEvid
         case .catFileBatch:
             var parser = try GitCatFileBatchHeaderParser(
                 expectedOIDs: catFileObjectHexes,
-                hashAlgorithm: hashAlgorithm
+                hashAlgorithm: hashAlgorithm,
+                payloadsIncluded: false
             )
             _ = try parser.append(stdout)
             try parser.finish()
