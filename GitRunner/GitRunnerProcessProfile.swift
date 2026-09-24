@@ -243,6 +243,7 @@ enum GitRunnerSignatureVerifier {
     }
 }
 
+#if GIT_FEASIBILITY_HARNESS
 enum GitRunnerHarnessProbe {
     static let openProbeArgument = GitRunnerInvocation.openProbeArgument
     static let writeProbeArgument = GitRunnerInvocation.writeProbeArgument
@@ -409,3 +410,4 @@ enum GitRunnerHarnessProbe {
         }
     }
 }
+#endif

@@ -20,14 +20,16 @@ struct CleanupScenario: FeasibilityScenario {
                 sandboxLogURL: sandboxLogURL
             )
         } catch {
+            let reason = FeasibilityScenarioFailure.reason(for: error)
+            try? ("scenario_failure=\(reason)\n").write(to: sandboxLogURL, atomically: true, encoding: .utf8)
             return FeasibilityScenarioResult(
                 id: id,
                 status: .failed,
                 passed: false,
                 sandboxLogPath: "logs/\(id.rawValue).log",
                 details: [
-                    "summary": error.localizedDescription,
-                    "scenario_failure": error.localizedDescription,
+                    "summary": reason,
+                    "scenario_failure": reason,
                 ]
             )
         }
@@ -37,13 +39,10 @@ struct CleanupScenario: FeasibilityScenario {
         scenarioDirectory: URL,
         sandboxLogURL: URL
     ) throws -> FeasibilityScenarioResult {
-        let runnerURL = try CleanupScenarioSupport.embeddedRunnerURL()
+        _ = scenarioDirectory
         let successCheck = try CleanupScenarioSupport.runSuccessfulOperationCleanupCheck()
         let failureCheck = try CleanupScenarioSupport.runFailureOperationCleanupCheck()
-        let killCheck = try CleanupScenarioSupport.runForcedKillCleanupCheck(
-            runnerURL: runnerURL,
-            scenarioDirectory: scenarioDirectory
-        )
+        let killCheck = CleanupScenarioSupport.runForcedKillCleanupCheck()
 
         let xpcUnavailable = successCheck.detail.hasPrefix("xpc_unavailable=")
             || failureCheck.detail.hasPrefix("xpc_unavailable=")
@@ -57,7 +56,7 @@ struct CleanupScenario: FeasibilityScenario {
         } else {
             passed = successCheck.passed && failureCheck.passed && killCheck.passed
             summary = passed
-                ? "Git evidence operations cleaned up after success, invalid-request failure, and forced SIGKILL."
+                ? "Git evidence operations cleaned up after success, invalid-request failure, and a timed-out runner killed by the service."
                 : "Cleanup scenario failed one or more success/failure/SIGKILL checks."
         }
         let logLines = [

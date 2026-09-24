@@ -20,14 +20,16 @@ struct SandboxDenialScenario: FeasibilityScenario {
                 sandboxLogURL: sandboxLogURL
             )
         } catch {
+            let reason = FeasibilityScenarioFailure.reason(for: error)
+            try? ("scenario_failure=\(reason)\n").write(to: sandboxLogURL, atomically: true, encoding: .utf8)
             return FeasibilityScenarioResult(
                 id: id,
                 status: .failed,
                 passed: false,
                 sandboxLogPath: "logs/\(id.rawValue).log",
                 details: [
-                    "summary": error.localizedDescription,
-                    "scenario_failure": error.localizedDescription,
+                    "summary": reason,
+                    "scenario_failure": reason,
                 ]
             )
         }
@@ -43,7 +45,6 @@ struct SandboxDenialScenario: FeasibilityScenario {
 
         let sandboxEnforced = SandboxDenialScenarioSupport.runnerSandboxEnforcementExpected(at: runnerURL)
         let probeResults = try SandboxDenialScenarioSupport.runDenialMatrix(
-            runnerURL: runnerURL,
             scenarioDirectory: scenarioDirectory,
             repositoryRoot: repositoryRoot
         )
@@ -70,7 +71,7 @@ struct SandboxDenialScenario: FeasibilityScenario {
         if sandboxEnforced {
             passed = probeResults.allSatisfy(\.denied)
             summary = passed
-                ? "Sandboxed GitRunner denied working-tree, sibling user data, Pearcleaner private state, metadata writes, project executable launch, and network access."
+                ? "GitRunner, launched by the sandboxed service, denied working-tree, sibling user data, Pearcleaner private state, metadata writes, project executable launch, and network access."
                 : "Sandbox denial matrix failed: \(allowedKinds.joined(separator: ", ")) were not denied."
         } else {
             passed = true

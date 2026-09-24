@@ -164,6 +164,8 @@ require_command codesign
 require_command python3
 require_command git
 
+# GIT_FEASIBILITY_HARNESS compiles the service's probe endpoint and the
+# runner's sandbox probes into this build only; shipping builds never have them.
 echo "Building signed Git feasibility harness (Release)..."
 xcodebuild -quiet \
     -project "$ROOT/Pearcleaner.xcodeproj" \
@@ -173,6 +175,7 @@ xcodebuild -quiet \
     -derivedDataPath "$DERIVED_DATA" \
     -clonedSourcePackagesDirPath "$SOURCE_PACKAGES" \
     -disableAutomaticPackageResolution \
+    SWIFT_ACTIVE_COMPILATION_CONDITIONS='$(inherited) GIT_FEASIBILITY_HARNESS' \
     build
 
 verify_codesign_not_adhoc "$APP_PATH"

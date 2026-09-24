@@ -3,10 +3,6 @@ import Foundation
 import GitEvidenceShared
 
 enum CleanupScenarioSupport {
-    static func embeddedRunnerURL(bundle: Bundle = .main) throws -> URL {
-        try GitTransitionScenarioSupport.embeddedRunnerURL(bundle: bundle)
-    }
-
     static func embeddedServiceURL(bundle: Bundle = .main) throws -> URL {
         try GitOperationsScenarioSupport.embeddedServiceURL(bundle: bundle)
     }
@@ -87,134 +83,43 @@ enum CleanupScenarioSupport {
         }
     }
 
-    static func runForcedKillCleanupCheck(
-        runnerURL: URL,
-        scenarioDirectory: URL
-    ) throws -> (passed: Bool, detail: String) {
-        let serviceHome = scenarioDirectory.appendingPathComponent("kill-home", isDirectory: true)
-        let serviceTemporaryDirectory = scenarioDirectory.appendingPathComponent("kill-tmp", isDirectory: true)
-        try FileManager.default.createDirectory(at: serviceHome, withIntermediateDirectories: true)
-        try FileManager.default.createDirectory(at: serviceTemporaryDirectory, withIntermediateDirectories: true)
+    /// Asks the service to run the hang probe, which never exits, and checks
+    /// that the service's timeout kills the runner's whole process group.
+    static func runForcedKillCleanupCheck() -> (passed: Bool, detail: String) {
+        let pattern = "git-runner-probe-hang"
+        let before = countMatchingProcesses(matching: pattern)
 
-        let before = countMatchingProcesses(matching: "GitRunner|/usr/bin/git")
-        let spawnedPID = try spawnDetachedGitRunner(
-            executableURL: runnerURL,
-            gitArguments: [GitRunnerInvocation.hangProbeArgument],
-            environment: [
-                "HOME": serviceHome.path,
-                "TMPDIR": serviceTemporaryDirectory.path,
-            ]
-        )
-
-        usleep(200_000)
-        let stillRunning = countMatchingProcesses(matching: "GitRunner|/usr/bin/git")
-        if stillRunning <= before {
-            return (false, "hang_probe_did_not_start pid=\(spawnedPID) before=\(before) after_spawn=\(stillRunning)")
+        let observedWhileRunning = ObservedCount()
+        let observer = DispatchWorkItem {
+            observedWhileRunning.value = countMatchingProcesses(matching: pattern)
         }
+        DispatchQueue.global(qos: .userInitiated).asyncAfter(deadline: .now() + 2, execute: observer)
 
-        _ = kill(spawnedPID, SIGKILL)
-        _ = waitpid(spawnedPID, nil, WNOHANG)
-
-        let killProcess = Process()
-        killProcess.executableURL = URL(fileURLWithPath: "/usr/bin/pkill")
-        killProcess.arguments = ["-9", "-f", "git-runner-probe-hang"]
-        try killProcess.run()
-        killProcess.waitUntilExit()
+        let result: ServiceProbeResult
+        do {
+            result = try ServiceProbeSupport.runProbe([GitRunnerInvocation.hangProbeArgument])
+        } catch {
+            observer.cancel()
+            return (false, "hang_probe_failed=\(FeasibilityScenarioFailure.reason(for: error))")
+        }
+        observer.wait()
 
         usleep(200_000)
-        let afterKill = countMatchingProcesses(matching: "GitRunner|/usr/bin/git")
-        let passed = afterKill <= before
-        let detail = "spawned_pid=\(spawnedPID) before=\(before) after_kill=\(afterKill)"
+        let afterKill = countMatchingProcesses(matching: pattern)
+        let timedOut = GitEvidenceXPCOperationStatus(rawValue: result.status) == .timedOut
+        let started = observedWhileRunning.value > before
+        let passed = timedOut && started && afterKill <= before
+        let detail = "status=\(result.status) before=\(before) while_running=\(observedWhileRunning.value) after_kill=\(afterKill)"
         return (passed, detail)
     }
+}
 
-    private static func spawnDetachedGitRunner(
-        executableURL: URL,
-        gitArguments: [String],
-        environment: [String: String]
-    ) throws -> pid_t {
-        var stdoutPipe: [Int32] = [0, 0]
-        var stderrPipe: [Int32] = [0, 0]
-        guard pipe(&stdoutPipe) == 0, pipe(&stderrPipe) == 0 else {
-            throw FeasibilityScenarioFailure.scenarioFailed(
-                .cleanup,
-                reason: "unable to create probe pipes for forced kill cleanup"
-            )
-        }
+private final class ObservedCount: @unchecked Sendable {
+    private let lock = NSLock()
+    private var storage = 0
 
-        let stdoutRead = stdoutPipe[0]
-        let stdoutWrite = stdoutPipe[1]
-        let stderrRead = stderrPipe[0]
-        let stderrWrite = stderrPipe[1]
-        _ = fcntl(stdoutRead, F_SETFD, FD_CLOEXEC)
-        _ = fcntl(stderrRead, F_SETFD, FD_CLOEXEC)
-
-        var fileActions: posix_spawn_file_actions_t? = nil
-        guard posix_spawn_file_actions_init(&fileActions) == 0 else {
-            throw FeasibilityScenarioFailure.scenarioFailed(
-                .cleanup,
-                reason: "unable to initialize spawn actions for forced kill cleanup"
-            )
-        }
-        defer { posix_spawn_file_actions_destroy(&fileActions) }
-
-        let devNull = open("/dev/null", O_RDONLY)
-        if devNull >= 0 {
-            _ = posix_spawn_file_actions_adddup2(&fileActions, devNull, STDIN_FILENO)
-            _ = posix_spawn_file_actions_addclose(&fileActions, devNull)
-        }
-        _ = posix_spawn_file_actions_adddup2(&fileActions, stdoutWrite, STDOUT_FILENO)
-        _ = posix_spawn_file_actions_adddup2(&fileActions, stderrWrite, STDERR_FILENO)
-        _ = posix_spawn_file_actions_addclose(&fileActions, stdoutRead)
-        _ = posix_spawn_file_actions_addclose(&fileActions, stderrWrite)
-        _ = posix_spawn_file_actions_addclose(&fileActions, stderrRead)
-
-        let argvStrings = [executableURL.path] + gitArguments
-        let argv = argvStrings.map { string -> UnsafeMutablePointer<CChar> in
-            guard let duplicated = strdup(string) else {
-                fatalError("CleanupScenario argv allocation failed")
-            }
-            return duplicated
-        }
-        defer { argv.forEach { free($0) } }
-        var argvWithNull = argv.map { Optional($0) }
-        argvWithNull.append(nil)
-
-        let envpStrings = environment.map { "\($0.key)=\($0.value)" }.sorted()
-        let envp = envpStrings.map { string -> UnsafeMutablePointer<CChar> in
-            guard let duplicated = strdup(string) else {
-                fatalError("CleanupScenario env allocation failed")
-            }
-            return duplicated
-        }
-        defer { envp.forEach { free($0) } }
-        var envpWithNull = envp.map { Optional($0) }
-        envpWithNull.append(nil)
-
-        var spawnedPID: pid_t = 0
-        let spawnStatus: Int32 = argvWithNull.withUnsafeMutableBufferPointer { argvBuffer in
-            envpWithNull.withUnsafeMutableBufferPointer { envpBuffer in
-                posix_spawn(
-                    &spawnedPID,
-                    executableURL.path,
-                    &fileActions,
-                    nil,
-                    argvBuffer.baseAddress,
-                    envpBuffer.baseAddress
-                )
-            }
-        }
-        guard spawnStatus == 0 else {
-            throw FeasibilityScenarioFailure.scenarioFailed(
-                .cleanup,
-                reason: "unable to spawn hang probe for forced kill cleanup (errno \(spawnStatus))"
-            )
-        }
-
-        close(stdoutWrite)
-        close(stderrWrite)
-        close(stdoutRead)
-        close(stderrRead)
-        return spawnedPID
+    var value: Int {
+        get { lock.lock(); defer { lock.unlock() }; return storage }
+        set { lock.lock(); storage = newValue; lock.unlock() }
     }
 }

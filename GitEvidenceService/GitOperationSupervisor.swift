@@ -51,7 +51,46 @@ enum GitOperationSupervisor {
             operation: operation,
             headObjectHex: headObjectHex
         )
+        return try supervise(
+            operation: operation,
+            runnerArguments: gitArguments,
+            runnerExecutableURL: runnerExecutableURL,
+            adminView: adminView,
+            catFileObjectIDs: catFileObjectIDs,
+            blobPipeWriteFD: blobPipeWriteFD,
+            shouldCancel: shouldCancel
+        )
+    }
 
+    #if GIT_FEASIBILITY_HARNESS
+    /// Runs a GitRunner sandbox probe under the same spawn, timeout and
+    /// process-group cleanup as a Git operation. Harness builds only.
+    static func runHarnessProbe(
+        arguments: [String],
+        runnerExecutableURL: URL,
+        adminView: GitSyntheticAdminView
+    ) throws -> GitOperationResult {
+        try supervise(
+            operation: .listCachedPaths,
+            runnerArguments: arguments,
+            runnerExecutableURL: runnerExecutableURL,
+            adminView: adminView,
+            catFileObjectIDs: [],
+            blobPipeWriteFD: nil,
+            shouldCancel: { false }
+        )
+    }
+    #endif
+
+    private static func supervise(
+        operation: GitEvidenceXPCOperation,
+        runnerArguments gitArguments: [String],
+        runnerExecutableURL: URL,
+        adminView: GitSyntheticAdminView,
+        catFileObjectIDs: [String],
+        blobPipeWriteFD: Int32?,
+        shouldCancel: @escaping @Sendable () -> Bool
+    ) throws -> GitOperationResult {
         var stdoutPipe: [Int32] = [0, 0]
         var stderrPipe: [Int32] = [0, 0]
         guard pipe(&stdoutPipe) == 0, pipe(&stderrPipe) == 0 else {

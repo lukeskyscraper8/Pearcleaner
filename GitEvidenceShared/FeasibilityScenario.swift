@@ -8,6 +8,15 @@ public protocol FeasibilityScenario: Sendable {
 
 public enum FeasibilityScenarioFailure: Error, Sendable, Equatable {
     case scenarioFailed(FeasibilityScenarioID, reason: String)
+
+    /// The scenario's own reason when `error` is a scenario failure, so
+    /// evidence doesn't record Foundation's generic enum description.
+    public static func reason(for error: Error) -> String {
+        if case let .scenarioFailed(_, reason) = error as? FeasibilityScenarioFailure {
+            return reason
+        }
+        return String(describing: error)
+    }
 }
 
 public enum FeasibilityPlaceholderScenario {

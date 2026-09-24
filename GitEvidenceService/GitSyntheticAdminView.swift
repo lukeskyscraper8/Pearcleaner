@@ -127,6 +127,31 @@ struct GitSyntheticAdminView: Sendable {
         )
     }
 
+    #if GIT_FEASIBILITY_HARNESS
+    /// An environment-only view for harness sandbox probes: no descriptors and
+    /// no Git directory, just the service's HOME and TMPDIR.
+    static func buildProbeView(
+        serviceHome: URL,
+        serviceTemporaryDirectory: URL
+    ) throws -> GitSyntheticAdminView {
+        let rootTemporaryURL = serviceTemporaryDirectory
+            .appendingPathComponent("harness-probe-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: rootTemporaryURL, withIntermediateDirectories: true)
+
+        var environment = GitRunnerEnvironmentPolicy.fixedGitEnvironmentValues
+        environment["HOME"] = serviceHome.path
+        environment["TMPDIR"] = serviceTemporaryDirectory.path
+
+        return GitSyntheticAdminView(
+            environment: environment,
+            metadataFileDescriptors: [],
+            gitDirectoryURL: rootTemporaryURL,
+            workTreeURL: rootTemporaryURL,
+            rootTemporaryURL: rootTemporaryURL
+        )
+    }
+    #endif
+
     func destroy() {
         try? FileManager.default.removeItem(at: rootTemporaryURL)
     }

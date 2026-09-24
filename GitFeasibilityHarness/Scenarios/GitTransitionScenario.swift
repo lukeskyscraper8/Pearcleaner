@@ -52,87 +52,63 @@ struct GitTransitionScenario: FeasibilityScenario {
         scenarioDirectory: URL,
         sandboxLogURL: URL
     ) throws -> FeasibilityScenarioResult {
-        let runnerURL = try GitTransitionScenarioSupport.embeddedRunnerURL()
+        _ = scenarioDirectory
+        // Both checks go through the sandboxed service, which is the only
+        // process allowed to launch GitRunner: macOS kills a runner that
+        // inherits a sandbox from an unsandboxed parent such as this harness.
+        let serviceURL = try GitOperationsScenarioSupport.embeddedServiceURL()
+        let runnerURL = try ServiceProbeSupport.serviceRunnerURL()
         let repositoryRoot = try GitTransitionScenarioSupport.repositoryRootURL()
         defer { try? FileManager.default.removeItem(at: repositoryRoot) }
 
-        let serviceHome = scenarioDirectory.appendingPathComponent("service-home", isDirectory: true)
-        let serviceTemporaryDirectory = scenarioDirectory.appendingPathComponent("service-tmp", isDirectory: true)
-        try FileManager.default.createDirectory(at: serviceHome, withIntermediateDirectories: true)
-        try FileManager.default.createDirectory(at: serviceTemporaryDirectory, withIntermediateDirectories: true)
-
+        // The index reaches Git only as an inherited descriptor
+        // (GIT_INDEX_FILE=/dev/fd/N), so listing tracked.txt proves the
+        // descriptor survived the runner's exec into Git.
         let indexPath = repositoryRoot.appendingPathComponent(".git/index")
         let indexDescriptor = try GitTransitionScenarioSupport.openReadOnlyDescriptor(for: indexPath)
         defer { close(indexDescriptor) }
 
-        let canaryPath = FileManager.default.homeDirectoryForCurrentUser
-            .appendingPathComponent("Library/Containers/com.lukerow.Pearcleaner/Data/git-transition-canary.txt")
-        let gitEnvironment = GitTransitionScenarioSupport.makeGitEnvironment(
-            repositoryRoot: repositoryRoot,
-            serviceHome: serviceHome,
-            serviceTemporaryDirectory: serviceTemporaryDirectory,
-            indexFileDescriptor: indexDescriptor
+        let request = try GitEvidenceXPCRequest(
+            operation: .listCachedPaths,
+            headObjectID: nil,
+            repositoryFormatVersion: 0,
+            objectHashAlgorithm: .sha1,
+            transferredDescriptors: [
+                GitEvidenceXPCTransferredDescriptor(
+                    record: GitEvidenceXPCDescriptorRecord(
+                        role: .index,
+                        identity: try DescriptorTransferScenarioSupport.makeIdentity(for: indexDescriptor)
+                    ),
+                    fileHandle: FileHandle(fileDescriptor: indexDescriptor, closeOnDealloc: false)
+                ),
+            ]
         )
+        let metadataResult = try GitOperationsScenarioSupport.perform(request: request, serviceURL: serviceURL)
+        let metadataStdout = String(data: metadataResult.stdoutPreview, encoding: .utf8) ?? ""
+        let metadataStderr = String(data: metadataResult.stderrPreview, encoding: .utf8) ?? ""
+        let metadataReadSucceeded = GitEvidenceXPCOperationStatus(rawValue: metadataResult.status) == .accepted
+            && metadataStdout.contains("tracked.txt")
 
-        let metadataTransition = try GitTransitionScenarioSupport.spawnGitRunner(
-            executableURL: runnerURL,
-            gitArguments: [
-                "--no-pager",
-                "--no-optional-locks",
-                "--no-replace-objects",
-                "-c", "core.fsmonitor=false",
-                "-c", "core.untrackedCache=false",
-                "-c", "core.hooksPath=/dev/null",
-                "-c", "submodule.recurse=false",
-                "-c", "maintenance.auto=false",
-                "-c", "core.attributesFile=/dev/null",
-                "-c", "core.excludesFile=/dev/null",
-                "-c", "color.ui=false",
-                "-c", "credential.helper=",
-                "-c", "protocol.allow=never",
-                "-c", "diff.external=",
-                "ls-files",
-                "--cached",
-                "-z",
-            ],
-            environment: gitEnvironment,
-            inheritedMetadataDescriptors: [indexDescriptor]
-        )
-
-        let metadataExitCode = metadataTransition.terminationStatus
-        let metadataStdout = String(data: metadataTransition.stdout, encoding: .utf8) ?? ""
-        let metadataStderr = String(data: metadataTransition.stderr, encoding: .utf8) ?? ""
-        let metadataReadSucceeded = metadataExitCode == 0 && metadataStdout.contains("tracked.txt")
-
-        let workingTreeProbe = try GitTransitionScenarioSupport.spawnGitRunner(
-            executableURL: runnerURL,
-            gitArguments: [
-                GitRunnerInvocation.openProbeArgument,
-                canaryPath.path,
-            ],
-            environment: [
-                "HOME": serviceHome.path,
-                "TMPDIR": serviceTemporaryDirectory.path,
-            ],
-            inheritedMetadataDescriptors: []
-        )
-
-        let probeExitCode = workingTreeProbe.terminationStatus
-        let probeStderr = String(data: workingTreeProbe.stderr, encoding: .utf8) ?? ""
-        let workingTreeReadDenied = probeExitCode == 0 && probeStderr.contains("probe_open_errno=")
-            && !probeStderr.contains("probe_open_errno=0")
+        // The same file is not readable by path from inside the sandbox.
+        let workingTreeFile = repositoryRoot.appendingPathComponent("tracked.txt")
+        let workingTreeProbe = try ServiceProbeSupport.runProbe([
+            GitRunnerInvocation.openProbeArgument,
+            workingTreeFile.path,
+        ])
+        let workingTreeReadDenied = ServiceProbeSupport.probeWasDenied(workingTreeProbe, marker: "probe_open_errno")
         let sandboxDenialVerified = workingTreeReadDenied
             || !GitTransitionScenarioSupport.runnerSandboxEnforcementExpected(at: runnerURL)
 
         let logLines: [String] = [
             "runner=\(runnerURL.path)",
             "repository_root=\(repositoryRoot.path)",
-            "metadata_transition_exit=\(metadataExitCode)",
+            "metadata_transfer_status=\(metadataResult.status)",
             "metadata_stdout=\(metadataStdout.trimmingCharacters(in: .whitespacesAndNewlines))",
             "metadata_stderr=\(metadataStderr.trimmingCharacters(in: .whitespacesAndNewlines))",
             "metadata_read_succeeded=\(metadataReadSucceeded)",
-            "working_tree_probe_exit=\(probeExitCode)",
-            "working_tree_probe_stderr=\(probeStderr.trimmingCharacters(in: .whitespacesAndNewlines))",
+            "working_tree_probe_status=\(workingTreeProbe.status)",
+            "working_tree_probe_exit=\(workingTreeProbe.exitCode)",
+            "working_tree_probe_stderr=\(workingTreeProbe.stderr.trimmingCharacters(in: .whitespacesAndNewlines))",
             "working_tree_read_denied=\(workingTreeReadDenied)",
             "sandbox_denial_verified=\(sandboxDenialVerified)",
         ]

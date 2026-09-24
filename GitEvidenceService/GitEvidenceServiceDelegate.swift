@@ -10,8 +10,12 @@ final class GitEvidenceServiceDelegate: NSObject, NSXPCListenerDelegate, GitEvid
         // PearcleanerHelper does, rather than a racy pid-based lookup.
         GitEvidenceCodesignValidation.applyClientRequirement(to: newConnection)
 
+        #if GIT_FEASIBILITY_HARNESS
+        let interface = GitEvidenceXPCHarnessInterface.make()
+        #else
         let interface = NSXPCInterface(with: GitEvidenceXPCProtocol.self)
         GitEvidenceXPCInterfaceConfigurator.apply(to: interface, isRemote: false)
+        #endif
         newConnection.exportedInterface = interface
         newConnection.exportedObject = self
         // Don't exit when a connection closes: the service keeps no state
@@ -236,6 +240,45 @@ final class GitEvidenceServiceDelegate: NSObject, NSXPCListenerDelegate, GitEvid
         throw POSIXError(.ENOENT)
     }
 }
+
+#if GIT_FEASIBILITY_HARNESS
+extension GitEvidenceServiceDelegate: GitEvidenceXPCHarnessProtocol {
+    func runHarnessProbe(_ arguments: [String], reply: @escaping (String, Int32, Data) -> Void) {
+        guard let probe = arguments.first,
+              GitEvidenceXPCHarnessInterface.probeArguments.contains(probe) else {
+            reply(GitEvidenceXPCOperationStatus.invalidRequest.rawValue, -1, Data())
+            return
+        }
+
+        do {
+            let servicePaths = try makeServicePaths()
+            let probeView = try GitSyntheticAdminView.buildProbeView(
+                serviceHome: servicePaths.home,
+                serviceTemporaryDirectory: servicePaths.temporary
+            )
+            defer { probeView.destroy() }
+
+            let result = try GitOperationSupervisor.runHarnessProbe(
+                arguments: arguments,
+                runnerExecutableURL: try embeddedRunnerURL(),
+                adminView: probeView
+            )
+            let status: GitEvidenceXPCOperationStatus = switch result.terminationReason {
+            case .timedOut: .timedOut
+            case .outputLimitExceeded: .outputLimitExceeded
+            case .exited, .signal: .accepted
+            }
+            reply(status.rawValue, result.exitCode, result.stderr)
+        } catch {
+            reply(
+                GitEvidenceXPCOperationStatus.operationFailed.rawValue,
+                -1,
+                Data(String(describing: error).utf8)
+            )
+        }
+    }
+}
+#endif
 
 private extension GitSyntheticAdminViewError {
     /// True when the request itself is malformed, as opposed to a service fault.
