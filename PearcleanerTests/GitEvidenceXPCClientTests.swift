@@ -35,6 +35,35 @@ final class GitEvidenceXPCClientTests: XCTestCase {
         XCTAssertNotNil(parsed)
     }
 
+    func testGitLaunchPathFollowsAllowlistedSelection() throws {
+        let link = FileManager.default.temporaryDirectory
+            .appendingPathComponent("xcode_select_link-\(UUID().uuidString)").path
+        defer { try? FileManager.default.removeItem(atPath: link) }
+        try FileManager.default.createSymbolicLink(
+            atPath: link,
+            withDestinationPath: "/Applications/Xcode.app/Contents/Developer"
+        )
+
+        XCTAssertEqual(
+            GitRunnerInvocation.resolvedGitLaunchPath(selectionLink: link, isExecutable: { _ in true }),
+            "/Applications/Xcode.app/Contents/Developer/usr/bin/git"
+        )
+    }
+
+    func testGitLaunchPathIgnoresUnlistedSelectionAndFallsBackInOrder() throws {
+        let link = FileManager.default.temporaryDirectory
+            .appendingPathComponent("xcode_select_link-\(UUID().uuidString)").path
+        defer { try? FileManager.default.removeItem(atPath: link) }
+        try FileManager.default.createSymbolicLink(atPath: link, withDestinationPath: "/tmp/Evil.app/Contents/Developer")
+
+        XCTAssertEqual(
+            GitRunnerInvocation.resolvedGitLaunchPath(selectionLink: link, isExecutable: { _ in true }),
+            "/Library/Developer/CommandLineTools/usr/bin/git"
+        )
+        XCTAssertNil(GitRunnerInvocation.resolvedGitLaunchPath(selectionLink: link, isExecutable: { _ in false }))
+        XCTAssertFalse(GitRunnerInvocation.gitLaunchPathCandidates.contains("/usr/bin/git"))
+    }
+
     func testXPCRequestRoundTripsWithoutPathMetadata() throws {
         let identity = GitEvidenceXPCFileIdentity(
             device: 1,

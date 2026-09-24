@@ -149,7 +149,7 @@ struct GitTransitionScenario: FeasibilityScenario {
             sandboxLogPath: relativeSandboxLog,
             details: [
                 "summary": passed
-                    ? "Metadata FD survived /usr/bin/git transition and sandbox denial checks passed or were deferred to signed matrix runs."
+                    ? "Metadata FD survived the Apple Git transition and sandbox denial checks passed or were deferred to signed matrix runs."
                     : "Git transition scenario failed metadata preservation and/or sandbox denial checks.",
                 "metadata_read_succeeded": String(metadataReadSucceeded),
                 "working_tree_read_denied": String(workingTreeReadDenied),
@@ -158,7 +158,7 @@ struct GitTransitionScenario: FeasibilityScenario {
                     GitTransitionScenarioSupport.runnerSandboxEnforcementExpected(at: runnerURL)
                 ),
                 "runner_version": GitRunnerVersion.current,
-                "git_launch_path": GitRunnerInvocation.gitLaunchPath,
+                "git_launch_path": GitRunnerInvocation.resolvedGitLaunchPath() ?? "not_found",
             ]
         )
     }

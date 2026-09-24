@@ -80,7 +80,7 @@ The design trusts:
 - the signed Pearcleaner application and its native scanner implementation;
 - the signed minimal Git-evidence XPC service, signed runner, and their verified sandbox profiles;
 - macOS system frameworks and system calls used directly by that implementation;
-- the `/usr/bin/git` system launch path and the system-selected Apple-signed Git image verified before use;
+- Apple's Git at one of the two allowlisted developer-tools paths (see §10.3), verified as Apple-signed before use;
 - Keychain for a device-local HMAC key when it is available;
 - HTTPS transport to the fixed official OSV storage host; and
 - advisory records only after archive and schema validation.
@@ -116,7 +116,7 @@ The primary protected assets are:
 
 1. The scanner never writes inside the selected project.
 2. The scanner never invokes Pearcleaner's privileged helper or Sentinel components.
-3. The main scanner launches no child process. Its sole process boundary is the dedicated sandboxed Git-evidence XPC service. That service may launch only the bundled signed `GitRunner`, whose sole permitted executable transition is the fixed launch path `/usr/bin/git` under an allowlisted operation.
+3. The main scanner launches no child process. Its sole process boundary is the dedicated sandboxed Git-evidence XPC service. That service may launch only the bundled signed `GitRunner`, whose sole permitted executable transition is Apple's Git at an allowlisted developer-tools path (§10.3) under an allowlisted operation.
 4. No shell is involved in scanning or remediation.
 5. No project-controlled executable, interpreter, helper, hook, filter, pager, editor, credential helper, askpass program, package manager, or network transport is launched.
 6. Filesystem authorization comes from a pinned selected-root capability, not a string-prefix comparison.
@@ -140,7 +140,7 @@ Conceptual components are:
 - **GitIgnoreClassifier:** natively applies bounded in-root `.gitignore` and `.git/info/exclude` data to verified paths; it never uses global excludes.
 - **GitEvidenceProvider:** opens validated Git metadata files read-only through the FileBroker and transfers their descriptors, typed roles, expected identities, and an operation enum to the Git-evidence XPC service.
 - **GitEvidenceService:** is a separately signed, independently sandboxed supervisor with no broad user-file, Full Disk Access, app-group, or network entitlement. It validates Git metadata, builds a synthetic administrative view, supervises one runner, and revalidates the source metadata.
-- **GitRunner:** is a minimal signed inherited-sandbox helper. It receives only allowlisted inherited read-only descriptors, applies the fixed process profile, and transitions only to `/usr/bin/git`.
+- **GitRunner:** is a minimal signed inherited-sandbox helper. It receives only allowlisted inherited read-only descriptors, applies the fixed process profile, and transitions only to allowlisted Apple Git (§10.3).
 - **SecretDetector:** finds supported structured credentials and returns masked evidence plus in-memory match identities.
 - **NodeLockfileDetector:** parses recognized lockfile revisions into exact registry-backed npm coordinates and dependency relationships.
 - **LifecycleDetector:** reads only selected fields from recognized `package.json` manifests.
@@ -268,7 +268,7 @@ After an operation, the main FileBroker reopens the source entries and compares 
 
 The main process sends bounded batches of read-only regular-file descriptors, typed descriptor roles, expected identities, and one operation enum to a separately signed XPC service. The service has its own App Sandbox with no user-selected-file, bookmark, user-selected-executable, Full Disk Access, network, automation, app-group, or privileged-helper entitlement. It exposes no arbitrary path, directory descriptor, command, argument, environment, URL, or write API.
 
-The service may spawn only the bundled signed `GitRunner`. The runner is signed with the App Sandbox and sandbox-inheritance entitlements required by Apple and no additional capability entitlement. The supervisor explicitly duplicates only the allowlisted read-only metadata descriptors and output/error pipes into the runner, then the runner replaces its own process image with the fixed launch path `/usr/bin/git`. This same-process transition is the only permitted path from runner to Git.
+The service may spawn only the bundled signed `GitRunner`. The runner is signed with the App Sandbox and sandbox-inheritance entitlements required by Apple and no additional capability entitlement. The supervisor explicitly duplicates only the allowlisted read-only metadata descriptors and output/error pipes into the runner, then the runner replaces its own process image with Apple's Git at an allowlisted path. This same-process transition is the only permitted path from runner to Git.
 
 The sandbox allowlist is described honestly. Git can read Apple-signed loader/framework/runtime files, the verified system developer-tool image, `/dev/null` and inherited pipes/descriptors, the otherwise empty private service/runner container and temporary directory, the service-authored administrative view, and the exact regular files represented by inherited read-only descriptors. It has no project path, directory capability, bookmark, project-source handle, or access to other user-document locations. A repository value cannot select a system, container, or temporary file because all Git administrative paths and object-view entries are service-authored from fixed grammars.
 
@@ -280,7 +280,9 @@ Every invocation uses the complete fixed prelude `--no-pager`, `--no-optional-lo
 
 The supervisor uses `POSIX_SPAWN_CLOEXEC_DEFAULT` or an observed equivalent, explicitly closes every unintended descriptor, and starts a new process group. Runner stdin is `/dev/null` except for the `cat-file` batch operation, where it is a bounded service-authored pipe containing only full object IDs already validated for that operation; the write end closes after the fixed request count. Immediately before the same-process Git transition, the runner clears `FD_CLOEXEC` only on the allowlisted metadata descriptors and required pipes; every other descriptor remains closed-on-exec or closed. The supervisor concurrently drains stdout and stderr into bounded buffers. Raw blob output crosses to the main ContentBroker only through a bounded anonymous pipe; it is never encoded into an XPC object, temporary file, log, or error. Each operation has a 30-second timeout and a 32 MiB combined-output cap. Cancellation, timeout, or overflow terminates the process group and escalates to group-wide `SIGKILL` after 500 ms. No output from a truncated, timed-out, signalled, unexpectedly exited, or malformed invocation is accepted.
 
-The scanner does not invoke a developer-tools installation prompt. Before the first launch, the service reads the OS developer-directory selection without executing a probe, resolves the developer-tool image used by `/usr/bin/git`, and verifies both the system launch path and resolved image with Security-framework code-signing APIs. The only permitted Git transition is `/usr/bin/git` to that verified Apple-signed system-selected image. A missing selection, failed Apple signature, unexpected executable transition, or incompatible Git makes evidence unavailable.
+The scanner does not invoke a developer-tools installation prompt. Before the transition, the runner reads the OS developer-directory selection (the `xcode-select` link) without executing a probe and uses the Git it points at when that Git is one of two fixed paths: `/Library/Developer/CommandLineTools/usr/bin/git` or `/Applications/Xcode.app/Contents/Developer/usr/bin/git`. If the selection is unreadable or points elsewhere, the runner uses the first of those two paths that exists, in that order. It verifies the chosen image with Security-framework code-signing APIs against `anchor apple`. The only permitted Git transition is to that verified Apple-signed image. No allowlisted Git, a failed Apple signature, an unexpected executable transition, or an incompatible Git makes evidence unavailable.
+
+*Amendment (2026-09-24):* this section originally pinned the launch path to `/usr/bin/git`. That path is an `xcrun` shim, and the first signed feasibility run showed it refusing to run inside an App Sandbox ("xcrun: error: cannot be used within an App Sandbox"). The runner therefore starts the real Git binary directly. The allowlist stays fixed and Apple-signed, so the trust boundary is unchanged apart from dropping the shim.
 
 ### 10.4 Allowed operations
 
@@ -304,7 +306,7 @@ The Git slice cannot begin with production code. Its first deliverable is a disp
 - explicit inheritance of only allowlisted file descriptors by `GitRunner`;
 - individual `/dev/fd/<file-fd>` synthetic index, loose-object, and pack/index access for every allowed operation;
 - correct partial/unavailable behavior at descriptor and `RLIMIT_NOFILE` boundaries;
-- preservation of descriptor access across the same-process `/usr/bin/git` transition;
+- preservation of descriptor access across the same-process Apple Git transition;
 - observed sandbox denial for direct working-tree reads, sibling user data, Pearcleaner private state, Git-metadata writes, project executable launch, and network access;
 - the expected narrow baseline access to Apple-signed runtime files and the empty service container; and
 - cleanup after success, failure, forced termination, and crash.
