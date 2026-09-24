@@ -48,6 +48,7 @@ struct LsTreeOperationScenario: FeasibilityScenario {
             "operation=list_head_tree_paths",
             "head_oid=\(repository.headObjectID.hex)",
             "transfer_status=\(result.status)",
+            "stderr_preview=\(String(data: result.stderrPreview, encoding: .utf8) ?? "")",
             "stdout_preview=\(stdout.trimmingCharacters(in: .whitespacesAndNewlines))",
             "contains_tracked_path=\(containsTrackedPath)",
             "contains_blob_oid=\(containsBlobOID)",

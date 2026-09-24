@@ -56,6 +56,7 @@ struct CatFileBatchOperationScenario: FeasibilityScenario {
             "operation=cat_file_batch",
             "blob_oid=\(repository.blobObjectID.hex)",
             "transfer_status=\(result.status)",
+            "stderr_preview=\(String(data: result.stderrPreview, encoding: .utf8) ?? "")",
             "stdout_preview=\(stdout.trimmingCharacters(in: .whitespacesAndNewlines))",
             "blob_pipe_provided=\(blobPipeProvided)",
             "blob_byte_count=\(blobBytes.count)",
