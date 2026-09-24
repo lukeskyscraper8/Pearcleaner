@@ -96,6 +96,32 @@ capture_system_diagnostics() {
     echo "--- end of key lines ---"
 }
 
+# Spec 10.5 only accepts evidence from Developer ID signed, notarized
+# products. Say plainly whether this run qualifies.
+print_signing_summary() {
+    /usr/bin/python3 - "$1" <<'PY'
+import json
+import sys
+
+with open(sys.argv[1], "r", encoding="utf-8") as handle:
+    manifest = json.load(handle)
+production = True
+for key in ("harnessSignature", "serviceSignature", "runnerSignature"):
+    signature = manifest.get(key)
+    if not signature:
+        print(f"{key}: not recorded")
+        production = False
+        continue
+    print(
+        f"{key}: {signature['identifier']} team={signature['teamIdentifier']}"
+        f" developerID={signature['developerIDSigned']} notarized={signature['notarized']}"
+        f" ({signature['leafAuthority']})"
+    )
+    production = production and signature["developerIDSigned"] and signature["notarized"]
+print("Production-signed evidence: " + ("yes" if production else "no (not valid for the gate)"))
+PY
+}
+
 run_harness_for_architecture() {
     local architecture="$1"
     local staging_root="$2"
@@ -154,6 +180,7 @@ run_harness_for_architecture() {
     cp -R "$staging_root/." "$tuple_dir/"
 
     echo "Archived feasibility evidence to $tuple_dir"
+    print_signing_summary "$tuple_dir/manifest.json"
     echo "Harness exit code (${architecture}): $harness_exit"
 
     return "$harness_exit"

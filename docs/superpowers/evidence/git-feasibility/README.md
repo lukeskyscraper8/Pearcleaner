@@ -32,12 +32,28 @@ docs/superpowers/evidence/git-feasibility/
 | `pearcleanerVersion` | string | Pearcleaner marketing version from the harness bundle. |
 | `harnessVersion` | string | Harness bundle marketing version (same source as Pearcleaner in Task 1). |
 | `runnerVersion` | string | Signed `GitRunner` version string used for tuple gating. |
-| `appleGitVersion` | string | Output of `/usr/bin/git --version` on the test host. |
+| `appleGitVersion` | string | Output of `/usr/bin/git --version` on the test host (the same Git the runner resolves; see spec §10.3). |
 | `osBuildFamily` | string | macOS product version + build family identifier. |
 | `architecture` | string | Machine architecture at test time. |
 | `testTimestamp` | string (ISO-8601) | UTC timestamp when the harness finished. |
 | `overallStatus` | string | `passed` or `failed`. |
 | `scenarios` | array | Per-scenario structured results (see below). |
+| `harnessSignature` | object (optional) | Code signature of the harness app, which stands in for Pearcleaner (see below). |
+| `serviceSignature` | object (optional) | Code signature of the embedded `GitEvidenceService.xpc`. |
+| `runnerSignature` | object (optional) | Code signature of the `GitRunner` embedded in the service. |
+
+### Code Signature Object
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `identifier` | string | Signing identifier. |
+| `teamIdentifier` | string | Team ID, or `none`. |
+| `cdhash` | string | Hex code-directory hash. |
+| `leafAuthority` | string | Leaf certificate summary. |
+| `developerIDSigned` | boolean | Signed with a Developer ID Application certificate. |
+| `notarized` | boolean | Satisfies the `notarized` code requirement. |
+
+Only a manifest whose three signatures are all Developer ID signed and notarized is gate evidence under spec §10.5. Manifests archived before signatures were recorded never qualify. `script/git_evidence_feasibility_run.sh` prints whether each run qualifies.
 
 ### Scenario Result Object
 

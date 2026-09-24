@@ -154,7 +154,12 @@ struct HarnessRunner: Sendable {
             architecture: metadata.architecture,
             testTimestamp: metadata.testTimestamp,
             overallStatus: FeasibilityManifest.overallStatus(for: scenarioResults),
-            scenarios: scenarioResults
+            scenarios: scenarioResults,
+            harnessSignature: CodeSignatureInspector.inspect(Bundle.main.bundleURL),
+            serviceSignature: (try? GitOperationsScenarioSupport.embeddedServiceURL())
+                .flatMap(CodeSignatureInspector.inspect),
+            runnerSignature: (try? ServiceProbeSupport.serviceRunnerURL())
+                .flatMap(CodeSignatureInspector.inspect)
         )
     }
 }
