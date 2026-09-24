@@ -1,6 +1,7 @@
 import Foundation
 import GitEvidenceShared
 import ObjectiveC
+import Security
 import XCTest
 @testable import Pearcleaner
 
@@ -21,6 +22,17 @@ final class GitEvidenceXPCClientTests: XCTestCase {
                 GitEvidenceServiceIdentity.pearcleanerClientRequirement
             )
         )
+    }
+
+    func testCombinedClientRequirementParsesAndCoversEveryClient() {
+        let combined = GitEvidenceServiceIdentity.acceptedClientRequirement
+        for requirement in GitEvidenceServiceIdentity.acceptedClientRequirements {
+            XCTAssertTrue(combined.contains("(\(requirement))"))
+        }
+
+        var parsed: SecRequirement?
+        XCTAssertEqual(SecRequirementCreateWithString(combined as CFString, [], &parsed), errSecSuccess)
+        XCTAssertNotNil(parsed)
     }
 
     func testXPCRequestRoundTripsWithoutPathMetadata() throws {

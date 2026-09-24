@@ -6,21 +6,17 @@ final class GitEvidenceServiceDelegate: NSObject, NSXPCListenerDelegate, GitEvid
     func listener(_ listener: NSXPCListener, shouldAcceptNewConnection newConnection: NSXPCConnection) -> Bool {
         _ = listener
 
-        guard GitEvidenceCodesignValidation.clientIsAllowlisted(pid: newConnection.processIdentifier) else {
-            fputs(
-                "GitEvidenceService rejected client pid=\(newConnection.processIdentifier)\n",
-                stderr
-            )
-            return false
-        }
+        // Pin the client through the XPC runtime's audit-token check, as
+        // PearcleanerHelper does, rather than a racy pid-based lookup.
+        GitEvidenceCodesignValidation.applyClientRequirement(to: newConnection)
 
         let interface = NSXPCInterface(with: GitEvidenceXPCProtocol.self)
         GitEvidenceXPCInterfaceConfigurator.apply(to: interface, isRemote: false)
         newConnection.exportedInterface = interface
         newConnection.exportedObject = self
-        newConnection.invalidationHandler = {
-            exit(0)
-        }
+        // Don't exit when a connection closes: the service keeps no state
+        // between requests, and exiting can interrupt a new connection launchd
+        // has already routed to this process. launchd ends idle services.
         newConnection.resume()
         return true
     }

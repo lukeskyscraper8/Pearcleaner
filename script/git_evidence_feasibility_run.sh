@@ -59,6 +59,43 @@ print(value)
 PY
 }
 
+# Saves what macOS logged about the harness, service and runner during a run
+# (unified log lines and crash reports) outside the archived evidence, and
+# prints the lines that usually explain a failure.
+capture_system_diagnostics() {
+    local architecture="$1"
+    local started_marker="$2"
+    local started_at="$3"
+    local diagnostics_dir="$ROOT/.build/feasibility-diagnostics/$architecture"
+
+    rm -rf "$diagnostics_dir"
+    mkdir -p "$diagnostics_dir"
+
+    /usr/bin/log show --style compact --start "$started_at" --predicate \
+        'process IN {"GitEvidenceService", "GitRunner", "GitFeasibilityHarness"} OR eventMessage CONTAINS "GitEvidenceService" OR eventMessage CONTAINS "GitRunner" OR eventMessage CONTAINS "GitFeasibilityHarness"' \
+        > "$diagnostics_dir/system.log" 2>&1 || true
+
+    local report
+    while IFS= read -r report; do
+        cp "$report" "$diagnostics_dir/" 2>/dev/null || true
+    done < <(find "$HOME/Library/Logs/DiagnosticReports" -maxdepth 1 -type f \
+        \( -name 'GitRunner*' -o -name 'GitEvidenceService*' -o -name 'GitFeasibilityHarness*' \) \
+        -newer "$started_marker" 2>/dev/null)
+
+    echo "Diagnostics for ${architecture} saved to $diagnostics_dir"
+    echo "--- key log lines (${architecture}) ---"
+    /usr/bin/grep -h -i -E 'deny|sandbox|reject|requirement|invalid|interrupt|crash|signal|entitlement' \
+        "$diagnostics_dir/system.log" 2>/dev/null | /usr/bin/head -40 || true
+    local crash_report
+    for crash_report in "$diagnostics_dir"/*.ips; do
+        [[ -f "$crash_report" ]] || continue
+        echo "--- crash report $(basename "$crash_report") ---"
+        /usr/bin/grep -h -E '"(procName|indicator|reasons|exception|type|signal|namespace)"' "$crash_report" \
+            | /usr/bin/head -12 || true
+    done
+    echo "--- end of key lines ---"
+}
+
 run_harness_for_architecture() {
     local architecture="$1"
     local staging_root="$2"
@@ -77,6 +114,11 @@ run_harness_for_architecture() {
         fi
     fi
 
+    local started_marker
+    started_marker="$(mktemp "${TMPDIR:-/tmp}/git-feasibility-started.XXXXXX")"
+    local started_at
+    started_at="$(date '+%Y-%m-%d %H:%M:%S')"
+
     echo "Running Git feasibility harness for ${architecture}..."
     set +e
     if ((${#launch_prefix[@]})); then
@@ -89,6 +131,8 @@ run_harness_for_architecture() {
             "$EXECUTABLE_PATH"
     fi
     local harness_exit=$?
+    capture_system_diagnostics "$architecture" "$started_marker" "$started_at"
+    rm -f "$started_marker"
 
     local manifest_path="$staging_root/manifest.json"
     if [[ ! -f "$manifest_path" ]]; then

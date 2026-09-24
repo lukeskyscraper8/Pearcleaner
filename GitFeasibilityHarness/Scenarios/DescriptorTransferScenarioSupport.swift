@@ -122,7 +122,7 @@ enum DescriptorTransferScenarioSupport {
         if let capturedError {
             throw FeasibilityScenarioFailure.scenarioFailed(
                 .descriptorTransfer,
-                reason: capturedError.localizedDescription
+                reason: "\(capturedError.domain) \(capturedError.code): \(capturedError.localizedDescription)"
             )
         }
 

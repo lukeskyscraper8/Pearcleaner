@@ -6,14 +6,14 @@ public enum GitEvidenceCodesignValidationError: Error, Sendable {
 }
 
 public enum GitEvidenceCodesignValidation {
-    public static func clientIsAllowlisted(pid: pid_t) -> Bool {
+    /// Pins an incoming connection to the allowlisted clients. The XPC runtime
+    /// then rejects messages from any other client using its audit token.
+    public static func applyClientRequirement(to connection: NSXPCConnection) {
         if ProcessInfo.processInfo.environment["GIT_FEASIBILITY_RELAXED_CODESIGN"] == "1" {
-            return true
+            return
         }
 
-        return GitEvidenceServiceIdentity.acceptedClientRequirements.contains { requirement in
-            (try? clientMatchesRequirement(pid: pid, requirement: requirement)) == true
-        }
+        connection.setCodeSigningRequirement(GitEvidenceServiceIdentity.acceptedClientRequirement)
     }
 
     public static func serviceAtURLMatchesRequirement(_ url: URL) throws -> Bool {
@@ -40,26 +40,5 @@ public enum GitEvidenceCodesignValidation {
         }
 
         return SecStaticCodeCheckValidity(staticCode, [], requirement) == errSecSuccess
-    }
-
-    private static func clientMatchesRequirement(pid: pid_t, requirement: String) throws -> Bool {
-        var guestCode: SecCode?
-        let guestStatus = SecCodeCopyGuestWithAttributes(
-            nil,
-            [kSecGuestAttributePid: pid] as CFDictionary,
-            [],
-            &guestCode
-        )
-        guard guestStatus == errSecSuccess, let guestCode else {
-            throw GitEvidenceCodesignValidationError.message("unable to inspect XPC client signature")
-        }
-
-        var parsedRequirement: SecRequirement?
-        let requirementStatus = SecRequirementCreateWithString(requirement as CFString, [], &parsedRequirement)
-        guard requirementStatus == errSecSuccess, let parsedRequirement else {
-            throw GitEvidenceCodesignValidationError.message("unable to build client requirement")
-        }
-
-        return SecCodeCheckValidity(guestCode, [], parsedRequirement) == errSecSuccess
     }
 }
