@@ -62,11 +62,13 @@ enum DescriptorTransferScenarioSupport {
             objectHashAlgorithm: .sha1,
             transferredDescriptors: []
         )
+        // The ping carries no index descriptor, so a reachable service must
+        // answer invalid_request rather than run Git.
         let pingResult = try perform(request: pingRequest, serviceURL: serviceURL)
-        guard GitEvidenceXPCOperationStatus(rawValue: pingResult.status) == .accepted else {
+        guard GitEvidenceXPCOperationStatus(rawValue: pingResult.status) == .invalidRequest else {
             throw FeasibilityScenarioFailure.scenarioFailed(
                 .descriptorTransfer,
-                reason: "GitEvidenceService ping rejected with status \(pingResult.status)"
+                reason: "GitEvidenceService ping returned status \(pingResult.status), expected invalid_request"
             )
         }
 

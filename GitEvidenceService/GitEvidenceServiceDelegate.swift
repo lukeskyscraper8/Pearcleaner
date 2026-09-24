@@ -32,6 +32,11 @@ final class GitEvidenceServiceDelegate: NSObject, NSXPCListenerDelegate, GitEvid
                 ),
                 nil
             )
+        } catch let adminViewError as GitSyntheticAdminViewError where adminViewError.isMalformedRequest {
+            reply(
+                GitEvidenceXPCReply(result: GitEvidenceXPCOperationResult(status: .invalidRequest)),
+                nil
+            )
         } catch {
             reply(nil, error as NSError)
         }
@@ -228,5 +233,15 @@ final class GitEvidenceServiceDelegate: NSObject, NSXPCListenerDelegate, GitEvid
         }
 
         throw POSIXError(.ENOENT)
+    }
+}
+
+private extension GitSyntheticAdminViewError {
+    /// True when the request itself is malformed, as opposed to a service fault.
+    var isMalformedRequest: Bool {
+        if case .filesystemFailure = self {
+            return false
+        }
+        return true
     }
 }
